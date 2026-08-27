@@ -3,6 +3,7 @@ package com.atest.web;
 import java.util.Map;
 
 import com.atest.service.TaskService;
+import com.atest.web.dto.BatchCreateTaskRequest;
 import com.atest.web.dto.CreateTaskRequest;
 import com.atest.web.dto.RerunRequest;
 import com.atest.web.dto.ReorderRequest;
@@ -31,11 +32,21 @@ public class TaskController {
         return taskService.create(request);
     }
 
+    /** Open API: several tasks in one request, grouped by one requestId; all-or-nothing. */
+    @PostMapping("/batch")
+    public Map<String, Object> createBatch(@RequestBody BatchCreateTaskRequest request) {
+        return taskService.createBatch(request);
+    }
+
     @GetMapping
     public Map<String, Object> list(@RequestParam(required = false) String status,
+                                    @RequestParam(required = false) String requestId,
                                     @RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "20") int size,
                                     @RequestParam(defaultValue = "true") boolean includeExecutions) {
+        if (requestId != null && !requestId.isBlank()) {
+            return taskService.listByRequestId(requestId, includeExecutions);
+        }
         return taskService.list(status, page, size, includeExecutions);
     }
 

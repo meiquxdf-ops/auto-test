@@ -77,54 +77,171 @@ public class TaskService {
 
     // ------------------------------------------------------------------ create
 
+    public static final Pattern REQUEST_ID_PATTERN = Pattern.compile("^[A-Za-z0-9._-]{1,64}$");
+    public static final int BATCH_MAX_ITEMS = 100;
+    public static final int REQUEST_ID_QUERY_CAP = 200;
+
     @Transactional
     public TaskView create(CreateTaskRequest request) {
-        if (request.getCommand() == null || request.getCommand().isBlank()) {
-            throw ApiException.badRequest("command 不能为空");
+        String requestId = normalizeRequestId(request.getRequestId(), false);
+        String callbackUrl = normalizeCallbackUrl(request.getCallbackUrl());
+        PreparedTask prepared = prepareTask(request.getName(), request.getCommand(), request.getCwd(),
+                request.getEnv(), request.getTargets(), request.getConditionConfig(), request.getOperator(),
+                request.getTimeoutSec(), request.getPriority(), null);
+        return persistTask(prepared, requestId, callbackUrl, Instant.now());
+    }
+
+    /**
+     * Open-API batch: one HTTP request creating several tasks (different commands / targets)
+     * grouped by one requestId. Validation of every item happens before the first insert, so an
+     * invalid item (e.g. unknown target) rejects the whole request without partial creates.
+     */
+    @Transactional
+    public Map<String, Object> createBatch(BatchCreateTaskRequest request) {
+        String requestId = normalizeRequestId(request.getRequestId(), true);
+        String callbackUrl = normalizeCallbackUrl(request.getCallbackUrl());
+        List<BatchCreateTaskRequest.Item> items = request.getItems();
+        if (items == null || items.isEmpty()) {
+            throw ApiException.badRequest("items 不能为空");
         }
-        String conditionJson = request.getConditionConfig() == null || request.getConditionConfig().isNull()
-                ? null : Json.write(request.getConditionConfig());
+        if (items.size() > BATCH_MAX_ITEMS) {
+            throw ApiException.badRequest("items 最多 " + BATCH_MAX_ITEMS + " 条，实际 " + items.size() + " 条");
+        }
+        List<PreparedTask> prepared = new ArrayList<>(items.size());
+        for (int i = 0; i < items.size(); i++) {
+            BatchCreateTaskRequest.Item item = items.get(i);
+            if (item == null) {
+                throw ApiException.badRequest("items[" + i + "] 不能为空");
+            }
+            prepared.add(prepareTask(item.getName(), item.getCommand(), item.getCwd(), item.getEnv(),
+                    item.getTargets(), item.getConditionConfig(), item.getOperator(), item.getTimeoutSec(),
+                    null, "items[" + i + "] "));
+        }
+        Instant now = Instant.now();
+        List<TaskView> tasks = new ArrayList<>(prepared.size());
+        for (PreparedTask p : prepared) {
+            tasks.add(persistTask(p, requestId, callbackUrl, now));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("requestId", requestId);
+        result.put("tasks", tasks);
+        return result;
+    }
+
+    /** Everything validated / resolved, nothing written yet. */
+    private record PreparedTask(String name, String command, String cwd, String envJson, String conditionJson,
+                                List<ResolvedTarget> targets, String operator, int timeoutSec, int priority) {
+    }
+
+    private PreparedTask prepareTask(String name, String command, String cwd, Map<String, String> env,
+                                     List<JsonNode> targets, JsonNode conditionConfig, String operator,
+                                     Integer timeoutSec, Integer priority, String errorPrefix) {
+        String prefix = errorPrefix == null ? "" : errorPrefix;
+        if (command == null || command.isBlank()) {
+            throw ApiException.badRequest(prefix + "command 不能为空");
+        }
+        String conditionJson = conditionConfig == null || conditionConfig.isNull()
+                ? null : Json.write(conditionConfig);
         try {
             judgeService.validate(conditionJson);
         } catch (IllegalArgumentException e) {
-            throw ApiException.badRequest(e.getMessage());
+            throw ApiException.badRequest(prefix + e.getMessage());
         }
+        List<ResolvedTarget> resolved;
+        try {
+            resolved = resolveTargets(targets);
+        } catch (ApiException e) {
+            throw prefix.isEmpty() ? e : ApiException.badRequest(prefix + e.getMessage());
+        }
+        return new PreparedTask(
+                name == null || name.isBlank() ? defaultName(command) : name.trim(),
+                command,
+                cwd,
+                env == null || env.isEmpty() ? null : Json.write(env),
+                conditionJson,
+                resolved,
+                operator,
+                timeoutSec == null || timeoutSec <= 0 ? props.getDispatch().getDefaultTimeoutSec() : timeoutSec,
+                priority == null ? 0 : priority);
+    }
 
-        List<ResolvedTarget> targets = resolveTargets(request.getTargets());
-        Instant now = Instant.now();
-
+    private TaskView persistTask(PreparedTask prepared, String requestId, String callbackUrl, Instant now) {
         TaskEntity task = new TaskEntity();
-        task.setName(request.getName() == null || request.getName().isBlank()
-                ? defaultName(request.getCommand()) : request.getName().trim());
-        task.setCommand(request.getCommand());
-        task.setCwd(request.getCwd());
-        task.setEnv(request.getEnv() == null || request.getEnv().isEmpty() ? null : Json.write(request.getEnv()));
-        task.setConditionConfig(conditionJson);
-        task.setTargets(Json.write(targets.stream().map(ResolvedTarget::raw).toList()));
-        task.setOperator(request.getOperator());
-        task.setTimeoutSec(request.getTimeoutSec() == null || request.getTimeoutSec() <= 0
-                ? props.getDispatch().getDefaultTimeoutSec() : request.getTimeoutSec());
-        task.setPriority(request.getPriority() == null ? 0 : request.getPriority());
+        task.setName(prepared.name());
+        task.setCommand(prepared.command());
+        task.setCwd(prepared.cwd());
+        task.setEnv(prepared.envJson());
+        task.setConditionConfig(prepared.conditionJson());
+        task.setTargets(Json.write(prepared.targets().stream().map(ResolvedTarget::raw).toList()));
+        task.setOperator(prepared.operator());
+        task.setTimeoutSec(prepared.timeoutSec());
+        task.setPriority(prepared.priority());
         task.setQueueOrder(taskRepository.maxQueueOrder() + 1);
         task.setStatus(TaskStatus.PENDING);
-        task.setTotalCount(targets.size());
+        task.setTotalCount(prepared.targets().size());
+        task.setRequestId(requestId);
+        task.setCallbackUrl(callbackUrl);
+        task.setCallbackStatus(callbackUrl == null ? CallbackStatus.NONE : CallbackStatus.PENDING);
         task.setCreatedAt(now);
         task.setUpdatedAt(now);
         taskRepository.save(task);
 
         List<TaskExecutionEntity> executions = new ArrayList<>();
-        for (ResolvedTarget target : targets) {
+        for (ResolvedTarget target : prepared.targets()) {
             executions.add(newExecution(task, target, now));
         }
         executionRepository.saveAll(executions);
 
         eventService.record(EventService.T_TASK_CREATED, null, null, task.getId(),
-                "创建任务 " + task.getName() + "，目标 " + targets.size() + " 台，operator=" + task.getOperator());
+                "创建任务 " + task.getName() + "，目标 " + prepared.targets().size() + " 台，operator="
+                        + task.getOperator() + (requestId == null ? "" : "，requestId=" + requestId));
         for (TaskExecutionEntity exec : executions) {
             eventService.record(EventService.T_CREATED, exec.getAgentId(), exec.getExecuteId(), task.getId(),
                     "排队等待下发");
         }
         return viewMapper.toTaskView(task, executions, true);
+    }
+
+    /** trim + charset check + global uniqueness; blank is only legal for the ops console. */
+    private String normalizeRequestId(String requestId, boolean required) {
+        String v = requestId == null ? "" : requestId.trim();
+        if (v.isEmpty()) {
+            if (required) {
+                throw ApiException.badRequest("requestId 不能为空");
+            }
+            return null;
+        }
+        if (!REQUEST_ID_PATTERN.matcher(v).matches()) {
+            throw ApiException.badRequest("requestId 只允许字母、数字和 . _ -，长度 1-64: " + v);
+        }
+        if (taskRepository.existsByRequestId(v)) {
+            throw ApiException.conflict("requestId 已存在: " + v);
+        }
+        return v;
+    }
+
+    private String normalizeCallbackUrl(String callbackUrl) {
+        String v = callbackUrl == null ? "" : callbackUrl.trim();
+        if (v.isEmpty()) {
+            return null;
+        }
+        if (v.length() > 1024) {
+            throw ApiException.badRequest("callbackUrl 最长 1024 字符");
+        }
+        URI uri;
+        try {
+            uri = new URI(v);
+        } catch (Exception e) {
+            throw ApiException.badRequest("callbackUrl 不是合法 URL: " + v);
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            throw ApiException.badRequest("callbackUrl 只支持 http/https");
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            throw ApiException.badRequest("callbackUrl 缺少主机名");
+        }
+        return v;
     }
 
     private TaskExecutionEntity newExecution(TaskEntity task, ResolvedTarget target, Instant now) {
@@ -229,6 +346,34 @@ public class TaskService {
         return viewMapper.toTaskView(task, executionRepository.findByTaskIdOrderByIdAsc(taskId), true);
     }
 
+    /** Open query: every task created under one requestId (single or batch), capped at 200. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> listByRequestId(String requestId, boolean includeExecutions) {
+        String v = requestId == null ? "" : requestId.trim();
+        if (v.isEmpty()) {
+            throw ApiException.badRequest("requestId 不能为空");
+        }
+        List<TaskEntity> tasks = taskRepository.findByRequestIdOrderByIdAsc(v,
+                PageRequest.of(0, REQUEST_ID_QUERY_CAP));
+        List<Long> ids = tasks.stream().map(TaskEntity::getId).toList();
+        Map<Long, List<TaskExecutionEntity>> byTask = new LinkedHashMap<>();
+        if (!ids.isEmpty()) {
+            for (TaskExecutionEntity exec : executionRepository.findByTaskIdInOrderByIdAsc(ids)) {
+                byTask.computeIfAbsent(exec.getTaskId(), k -> new ArrayList<>()).add(exec);
+            }
+        }
+        List<TaskView> items = tasks.stream()
+                .map(t -> viewMapper.toTaskView(t, byTask.getOrDefault(t.getId(), List.of()), includeExecutions))
+                .toList();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("requestId", v);
+        result.put("items", items);
+        result.put("total", items.size());
+        result.put("page", 0);
+        result.put("size", REQUEST_ID_QUERY_CAP);
+        return result;
+    }
+
     public TaskEntity requireTask(Long taskId) {
         return taskRepository.findById(taskId)
                 .orElseThrow(() -> ApiException.notFound("task 不存在: " + taskId));
@@ -316,6 +461,13 @@ public class TaskService {
         }
         executionRepository.saveAll(selected);
         task.setStatus(TaskStatus.PENDING);
+        // the task will reach a terminal state again, so a configured callback re-arms
+        if (task.getCallbackUrl() != null) {
+            task.setCallbackStatus(CallbackStatus.PENDING);
+            task.setCallbackAttempts(0);
+            task.setCallbackLastError(null);
+            task.setCallbackLastAt(null);
+        }
         task.setUpdatedAt(now);
         taskRepository.save(task);
         return viewMapper.toTaskView(task, executionRepository.findByTaskIdOrderByIdAsc(task.getId()), true);
