@@ -5,10 +5,26 @@ import { ElMessage } from 'element-plus'
 import { getApiBase, getApiBaseLabel, setApiBase } from '@/api/http'
 import { SSE_STATE_TEXT } from '@/api/sse'
 import { useAgents } from '@/stores/agents'
+import { isEmbed } from '@/utils/embed'
 import { fromNow } from '@/utils/format'
 
 const route = useRoute()
 const { agents, sseState, lastUpdatedAt, reconnect, refresh } = useAgents()
+
+/** 嵌入宿主（iframe 或 embed=1）：去掉侧栏 / 顶栏，页面占满整个 iframe */
+const embedded = computed(() => isEmbed(route.query))
+
+/** 开放查询页（含嵌入）给 html 打标，让传送到 body 的确认框/下拉也走暗色 */
+const openTheme = computed(() => embedded.value || route.meta.nav === 'open')
+
+watch(
+  [embedded, openTheme],
+  ([embed, open]) => {
+    document.documentElement.classList.toggle('nat-embed', embed)
+    document.documentElement.classList.toggle('nat-open', open)
+  },
+  { immediate: true },
+)
 
 const COMPACT_QUERY = '(max-width: 1100px)'
 
@@ -53,6 +69,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   media?.removeEventListener('change', onMediaChange)
   window.removeEventListener('keydown', onKeydown)
+  document.documentElement.classList.remove('nat-embed', 'nat-open')
 })
 
 watch(() => route.fullPath, closeDrawer)
@@ -114,10 +131,11 @@ function resetSetting() {
     :class="{
       'shell--rail': railCollapsed,
       'shell--compact': compact,
+      'shell--embed': embedded,
       'is-open': compact && drawerOpen,
     }"
   >
-    <aside class="side" :aria-hidden="compact && !drawerOpen">
+    <aside v-if="!embedded" class="side" :aria-hidden="compact && !drawerOpen">
       <div class="side__brand">
         <span class="side__logo">AT</span>
         <span class="side__brand-text">测试执行平台</span>
@@ -154,10 +172,10 @@ function resetSetting() {
       </div>
     </aside>
 
-    <div v-if="compact" class="scrim" :class="{ 'is-on': drawerOpen }" @click="closeDrawer" />
+    <div v-if="compact && !embedded" class="scrim" :class="{ 'is-on': drawerOpen }" @click="closeDrawer" />
 
     <div class="main">
-      <header class="topbar">
+      <header v-if="!embedded" class="topbar">
         <div class="topbar__left">
           <button v-if="compact" class="icon-btn" title="打开导航" @click="drawerOpen = true">
             <el-icon><Expand /></el-icon>
@@ -482,6 +500,11 @@ function resetSetting() {
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+/* 嵌入态：侧栏 / 顶栏都不渲染，内容占满 iframe，不给滚动条预留空隙 */
+.shell--embed .content {
+  scrollbar-gutter: auto;
 }
 
 .mb12 {

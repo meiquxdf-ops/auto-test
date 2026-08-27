@@ -11,6 +11,7 @@ import {
   type RerunMode,
   type Task,
 } from '@/api/types'
+import { isEmbed } from '@/utils/embed'
 import { copyText, durationBetween, formatFullTime, formatTime } from '@/utils/format'
 import { callbackStatusMeta, isTerminal, statusMeta } from '@/utils/status'
 import CopyableId from '@/components/CopyableId.vue'
@@ -21,6 +22,9 @@ import OpenTimelineDrawer from '@/components/open/OpenTimelineDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+/** 嵌入宿主（iframe / embed=1）：隐藏页头，跳出页面的链接改开新窗口 */
+const embedded = computed(() => isEmbed(route.query))
 
 const LAST_KEY = 'nat.openConsole.requestId'
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/
@@ -92,8 +96,10 @@ function syncViewport() {
   viewportHeight.value = window.innerHeight
 }
 
-/** 表头常驻，任务多也不会把页面拉长到看不到表尾 */
-const tableMaxHeight = computed(() => Math.max(320, viewportHeight.value - 300))
+/** 表头常驻，任务多也不会把页面拉长到看不到表尾；嵌入态没有页头，可以更高 */
+const tableMaxHeight = computed(() =>
+  Math.max(320, viewportHeight.value - (embedded.value ? 220 : 300)),
+)
 
 onMounted(() => {
   syncViewport()
@@ -298,7 +304,13 @@ function callbackDetail(task: Task): string {
 }
 
 function gotoExecution(exec: Execution) {
-  void router.push(`/executions/${exec.executeId}`)
+  const path = `/executions/${exec.executeId}`
+  // 嵌入态开新窗口，避免宿主 iframe 被整个运维台替换
+  if (embedded.value) {
+    window.open(router.resolve(path).href, '_blank', 'noopener')
+    return
+  }
+  void router.push(path)
 }
 
 /* ------------------------------------------------------------ 展开行 */
@@ -563,9 +575,9 @@ async function copySnippet() {
 </script>
 
 <template>
-  <div class="page oc">
+  <div class="page oc theme-open" :class="{ 'oc--embed': embedded }">
     <div class="oc__wrap" :class="{ 'oc__wrap--narrow': viewState !== 'result' }">
-      <div class="page-head">
+      <div v-if="!embedded" class="page-head">
         <div>
           <h2 class="page-head__title">开放查询</h2>
           <p class="page-head__desc">用创建任务时的 requestId 查这批任务的执行进度与回调投递，无需登录。</p>
@@ -602,20 +614,65 @@ async function copySnippet() {
       <template v-if="viewState === 'result'">
         <el-alert v-if="refreshError" type="error" :closable="false" show-icon :title="refreshError" class="oc__alert" />
 
-        <!-- 概览 -->
+        <!-- 概览：HUD 式指挥台 -->
         <section class="panel oc-ov">
-          <div class="oc-ov__row">
+          <div class="oc-ov__head">
             <span
               class="oc-ov__badge"
               :style="{ color: overall.color, background: overall.bg, borderColor: overall.border }"
             >
+              <i class="oc-ov__badge-dot" />
               {{ overall.label }}
             </span>
-            <div class="oc-ov__stats">
-              <div v-for="it in statItems" :key="it.key" class="oc-ov__stat">
-                <b class="oc-ov__n" :style="{ color: it.n ? it.color : 'var(--nat-text-weak)' }">{{ it.n }}</b>
-                <span class="oc-ov__l">{{ it.label }}</span>
-              </div>
+            <div class="oc-ov__meta">
+              <span class="oc-ov__meta-i">
+                <span class="oc-ov__k">操作人</span>
+                <template v-if="operators.length">
+                  <el-tag v-for="op in operators" :key="op" size="small" effect="plain" class="oc-ov__op">
+                    {{ op }}
+                  </el-tag>
+                </template>
+                <span v-else class="muted">-</span>
+              </span>
+              <span class="oc-ov__meta-i">
+                <span class="oc-ov__k">开始</span>
+                <span class="mono" :title="formatFullTime(timeSpan.start)">{{ formatTime(timeSpan.start) }}</span>
+              </span>
+              <span class="oc-ov__meta-i">
+                <span class="oc-ov__k">结束</span>
+                <span v-if="timeSpan.end" class="mono" :title="formatFullTime(timeSpan.end)">
+                  {{ formatTime(timeSpan.end) }}
+                </span>
+                <span v-else class="oc-ov__live">进行中</span>
+              </span>
+              <span class="oc-ov__meta-i">
+                <span class="oc-ov__k">时长</span>
+                <span class="mono">{{ timeSpan.duration }}</span>
+              </span>
+              <span class="oc-ov__meta-i oc-ov__meta-i--cb">
+                <span class="oc-ov__k">回调</span>
+                <template v-if="callbackSummary.length">
+                  <el-tooltip
+                    v-for="c in callbackSummary"
+                    :key="c.status"
+                    :content="c.meta.desc"
+                    placement="top"
+                    popper-class="oc-pop"
+                  >
+                    <el-tag size="small" effect="light" :type="c.meta.type" class="oc-ov__cb">
+                      {{ c.meta.label }} {{ c.n }}
+                    </el-tag>
+                  </el-tooltip>
+                </template>
+                <span v-else class="muted">未配置</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="oc-ov__stats">
+            <div v-for="it in statItems" :key="it.key" class="oc-ov__stat">
+              <b class="oc-ov__n" :style="{ color: it.n ? it.color : 'var(--nat-text-weak)' }">{{ it.n }}</b>
+              <span class="oc-ov__l">{{ it.label }}</span>
             </div>
           </div>
 
@@ -629,50 +686,6 @@ async function copySnippet() {
             />
             <span class="oc-ov__prog-num mono">
               {{ terminalCount }}/{{ tasks.length }} · {{ progressPct.toFixed(1) }}%
-            </span>
-          </div>
-
-          <div class="oc-ov__meta">
-            <span class="oc-ov__meta-i">
-              <span class="oc-ov__k">操作人</span>
-              <template v-if="operators.length">
-                <el-tag v-for="op in operators" :key="op" size="small" effect="plain" class="oc-ov__op">
-                  {{ op }}
-                </el-tag>
-              </template>
-              <span v-else class="muted">-</span>
-            </span>
-            <span class="oc-ov__meta-i">
-              <span class="oc-ov__k">开始</span>
-              <span class="mono" :title="formatFullTime(timeSpan.start)">{{ formatTime(timeSpan.start) }}</span>
-            </span>
-            <span class="oc-ov__meta-i">
-              <span class="oc-ov__k">结束</span>
-              <span v-if="timeSpan.end" class="mono" :title="formatFullTime(timeSpan.end)">
-                {{ formatTime(timeSpan.end) }}
-              </span>
-              <span v-else class="oc-ov__live">进行中</span>
-            </span>
-            <span class="oc-ov__meta-i">
-              <span class="oc-ov__k">时长</span>
-              <span class="mono">{{ timeSpan.duration }}</span>
-            </span>
-            <span class="oc-ov__meta-i oc-ov__meta-i--cb">
-              <span class="oc-ov__k">回调</span>
-              <template v-if="callbackSummary.length">
-                <el-tooltip
-                  v-for="c in callbackSummary"
-                  :key="c.status"
-                  :content="c.meta.desc"
-                  placement="top"
-                  popper-class="oc-pop"
-                >
-                  <el-tag size="small" effect="light" :type="c.meta.type" class="oc-ov__cb">
-                    {{ c.meta.label }} {{ c.n }}
-                  </el-tag>
-                </el-tooltip>
-              </template>
-              <span v-else class="muted">未配置</span>
             </span>
           </div>
         </section>
@@ -952,6 +965,34 @@ async function copySnippet() {
 </template>
 
 <style scoped>
+/* ------------------------------------------------------------ 画布 */
+
+/* 暗色指挥台画布：纯色底 + 低透明度网格线（只用 repeating-linear-gradient，无滤镜/模糊） */
+.oc {
+  min-height: 100%;
+  background-color: #070b14;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      rgba(148, 163, 184, 0.05) 0,
+      rgba(148, 163, 184, 0.05) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.05) 0,
+      rgba(148, 163, 184, 0.05) 1px,
+      transparent 1px,
+      transparent 48px
+    );
+}
+
+/* 嵌入态：宿主已有标题与留白，页内只留必要间距 */
+.oc--embed {
+  padding: 12px 14px 18px;
+}
+
 /* 结果态放开宽度让表格有空间；速览/空态维持阅读宽度 */
 .oc__wrap--narrow {
   max-width: 960px;
@@ -970,6 +1011,11 @@ async function copySnippet() {
   padding: 10px 14px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+  border-color: var(--nat-hairline);
+}
+
+.oc--embed .oc__bar {
+  padding: 8px 12px;
 }
 
 .oc__field {
@@ -990,7 +1036,7 @@ async function copySnippet() {
 }
 
 .oc__hint.is-error {
-  color: #dc2626;
+  color: #f87171;
 }
 
 .oc__bar-right {
@@ -1008,9 +1054,9 @@ async function copySnippet() {
   max-width: 280px;
   min-width: 0;
   padding: 3px 8px;
-  border: 1px solid var(--nat-border);
+  border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 6px;
-  background: #f5f7fa;
+  background: rgba(148, 163, 184, 0.08);
   font-size: 12px;
 }
 
@@ -1030,58 +1076,99 @@ async function copySnippet() {
   margin-bottom: 12px;
 }
 
-/* ------------------------------------------------------------ 概览 */
+/* ------------------------------------------------------------ 概览 HUD */
 
 .oc-ov {
-  padding: 14px 16px;
+  padding: 16px 18px;
   margin-bottom: 12px;
 }
 
-.oc-ov__row {
+.oc-ov__head {
   display: flex;
   align-items: center;
-  gap: 16px 20px;
+  gap: 10px 18px;
   flex-wrap: wrap;
 }
 
+/* 总体状态：发光胶囊。语义色来自行内样式，光晕用单层 box-shadow，不用 filter */
 .oc-ov__badge {
   flex: none;
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 12px;
+  gap: 7px;
+  height: 30px;
+  padding: 0 16px;
   border: 1px solid transparent;
-  border-radius: 13px;
+  border-radius: 15px;
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 640;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 18px -6px currentColor;
 }
 
+.oc-ov__badge-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* 8 格数据仓：细分隔线，数字等宽对齐 */
 .oc-ov__stats {
-  display: flex;
-  align-items: baseline;
-  gap: 4px 18px;
-  flex-wrap: wrap;
-  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  margin-top: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.04);
+  overflow: hidden;
 }
 
 .oc-ov__stat {
   display: flex;
-  align-items: baseline;
-  gap: 5px;
-  white-space: nowrap;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 6px 9px;
+  border-left: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.oc-ov__stat:first-child {
+  border-left: none;
 }
 
 .oc-ov__n {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 640;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
 .oc-ov__l {
   flex: none;
   color: var(--nat-text-weak);
-  font-size: 12px;
+  font-size: 11.5px;
   white-space: nowrap;
+}
+
+@media (max-width: 880px) {
+  .oc-ov__stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .oc-ov__stat {
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+  }
+
+  .oc-ov__stat:nth-child(-n + 4) {
+    border-top: none;
+  }
+
+  .oc-ov__stat:nth-child(4n + 1) {
+    border-left: none;
+  }
 }
 
 .oc-ov__prog {
@@ -1096,6 +1183,16 @@ async function copySnippet() {
   min-width: 120px;
 }
 
+/* 发光进度轨：CSS 渐变填充 + 单层弱光晕 */
+.oc-ov__prog-bar :deep(.el-progress-bar__outer) {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.oc-ov__prog-bar :deep(.el-progress-bar__inner) {
+  background: linear-gradient(90deg, #3b82f6, #2ee9d0);
+  box-shadow: 0 0 12px -3px rgba(46, 233, 208, 0.55);
+}
+
 .oc-ov__prog-num {
   flex: none;
   color: var(--nat-text-sub);
@@ -1108,7 +1205,8 @@ async function copySnippet() {
   align-items: center;
   gap: 6px 22px;
   flex-wrap: wrap;
-  margin-top: 10px;
+  margin-left: auto;
+  min-width: 0;
   font-size: 12.5px;
 }
 
@@ -1136,7 +1234,7 @@ async function copySnippet() {
 }
 
 .oc-ov__live {
-  color: #2563eb;
+  color: #2ee9d0;
   font-size: 12px;
 }
 
@@ -1179,7 +1277,7 @@ async function copySnippet() {
   display: block;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12.5px;
-  color: #26303d;
+  color: #c7d7ea;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1208,7 +1306,7 @@ async function copySnippet() {
 }
 
 .time-live {
-  color: #2563eb;
+  color: #2ee9d0;
   font-size: 12px;
 }
 
@@ -1234,11 +1332,11 @@ async function copySnippet() {
 
 :deep(.el-table__expanded-cell) {
   padding: 0;
-  background: #fafbfd;
+  background: #0a101b;
 }
 
 :deep(.el-table__expanded-cell:hover) {
-  background: #fafbfd !important;
+  background: #0a101b !important;
 }
 
 .detail {
@@ -1281,6 +1379,22 @@ async function copySnippet() {
   opacity: 0.55;
 }
 
+/* EmptyState 的浅色图标底在暗色画布上换成半透明层 */
+.oc :deep(.empty__icon) {
+  background: rgba(148, 163, 184, 0.1);
+  color: #8b9cb3;
+}
+
+.oc :deep(.empty__icon--error) {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+}
+
+.oc :deep(.empty__icon--search) {
+  background: rgba(46, 233, 208, 0.1);
+  color: #2ee9d0;
+}
+
 /* ------------------------------------------------------------ 空态 / 速览 */
 
 .oc__loading {
@@ -1305,11 +1419,12 @@ async function copySnippet() {
   line-height: 1.95;
 }
 
+/* 终端卡片：纯色深底 + 青色发丝线 */
 .oc__code {
   position: relative;
-  border: 1px solid var(--nat-border);
-  border-radius: 8px;
-  background: #f7f9fc;
+  border: 1px solid var(--nat-hairline);
+  border-radius: 10px;
+  background: #05080f;
 }
 
 .oc__copy {
@@ -1325,7 +1440,7 @@ async function copySnippet() {
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.75;
-  color: #26303d;
+  color: #b9cadf;
   white-space: pre-wrap;
   word-break: break-word;
 }

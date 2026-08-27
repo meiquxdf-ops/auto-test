@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
+import { isEmbed } from '@/utils/embed'
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/dashboard' },
@@ -63,6 +64,11 @@ const router = createRouter({
 
 router.afterEach((to) => {
   const title = (to.meta.title as string | undefined) ?? ''
+  // 嵌入宿主时标题归宿主管，不追加平台后缀
+  if (isEmbed(to.query)) {
+    if (title) document.title = title
+    return
+  }
   document.title = title ? `${title} · 测试执行平台` : '测试执行平台'
 })
 

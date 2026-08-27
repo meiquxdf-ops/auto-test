@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { SSE_STATE_TEXT } from '@/api/sse'
 import { useExecutionLog } from '@/composables/useExecutionLog'
+import { isEmbed } from '@/utils/embed'
 import CopyableId from '@/components/CopyableId.vue'
 import LogTerminal from '@/components/LogTerminal.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -21,9 +22,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'closed'): void }>()
 
+const route = useRoute()
 const router = useRouter()
 const visible = ref(true)
 const executeIdRef = computed(() => props.executeId)
+
+/** 嵌入宿主时跳出本页的链接改开新窗口，宿主 iframe 里保持当前查询页 */
+const embedded = computed(() => isEmbed(route.query))
 
 const {
   execution,
@@ -46,13 +51,25 @@ const connType = computed(() => (finished.value ? 'info' : sseState.value === 'o
 const connText = computed(() => (finished.value ? '已结束' : SSE_STATE_TEXT[sseState.value]))
 
 function openFull() {
+  const path = `/executions/${props.executeId}`
+  if (embedded.value) {
+    window.open(router.resolve(path).href, '_blank', 'noopener')
+    return
+  }
   visible.value = false
-  void router.push(`/executions/${props.executeId}`)
+  void router.push(path)
 }
 </script>
 
 <template>
-  <el-drawer v-model="visible" :size="'min(880px, 100vw)'" :with-header="false" @closed="emit('closed')">
+  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的暗色变量 -->
+  <el-drawer
+    v-model="visible"
+    class="theme-open"
+    :size="'min(880px, 100vw)'"
+    :with-header="false"
+    @closed="emit('closed')"
+  >
     <div class="drawer">
       <div class="drawer__head">
         <div class="drawer__ident">

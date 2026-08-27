@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { errorMessage } from '@/api/http'
 import { getTimeline } from '@/api/timeline'
 import type { TimelineEvent } from '@/api/types'
+import { isEmbed } from '@/utils/embed'
 import CopyableId from '@/components/CopyableId.vue'
 import TimelineList from '@/components/TimelineList.vue'
 
@@ -19,11 +20,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'closed'): void }>()
 
+const route = useRoute()
 const router = useRouter()
 const visible = ref(true)
 const events = ref<TimelineEvent[]>([])
 const loading = ref(false)
 const error = ref('')
+
+/** 嵌入宿主时跳出本页的链接改开新窗口，事件里的执行链接直接降级为纯文本 */
+const embedded = computed(() => isEmbed(route.query))
 
 async function load() {
   loading.value = true
@@ -43,13 +48,25 @@ onMounted(() => {
 })
 
 function gotoFull() {
+  const target = { path: '/timeline', query: { executeId: props.executeId } }
+  if (embedded.value) {
+    window.open(router.resolve(target).href, '_blank', 'noopener')
+    return
+  }
   visible.value = false
-  void router.push({ path: '/timeline', query: { executeId: props.executeId } })
+  void router.push(target)
 }
 </script>
 
 <template>
-  <el-drawer v-model="visible" :size="'min(720px, 100vw)'" :with-header="false" @closed="emit('closed')">
+  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的暗色变量 -->
+  <el-drawer
+    v-model="visible"
+    class="theme-open"
+    :size="'min(720px, 100vw)'"
+    :with-header="false"
+    @closed="emit('closed')"
+  >
     <div class="drawer">
       <div class="drawer__head">
         <div class="drawer__ident">
@@ -69,7 +86,12 @@ function gotoFull() {
       <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" class="drawer__alert" />
 
       <div class="drawer__body">
-        <TimelineList :events="events" :loading="loading" empty-text="该执行暂无事件" />
+        <TimelineList
+          :events="events"
+          :loading="loading"
+          :show-execute-link="!embedded"
+          empty-text="该执行暂无事件"
+        />
       </div>
     </div>
   </el-drawer>
@@ -134,5 +156,20 @@ function gotoFull() {
   min-height: 0;
   overflow-y: auto;
   padding-top: 8px;
+}
+
+/* 时间线卡片写死了白底，在暗色抽屉里换成深色面 */
+.drawer :deep(.tl__card) {
+  background: #0a111e;
+  box-shadow: none;
+}
+
+.drawer :deep(.tl__node) {
+  border-color: #0d1422;
+}
+
+.drawer :deep(.empty__icon) {
+  background: rgba(148, 163, 184, 0.1);
+  color: #8b9cb3;
 }
 </style>

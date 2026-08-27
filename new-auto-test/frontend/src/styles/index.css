@@ -412,3 +412,158 @@ body {
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------- 开放查询暗色主题
+   只在挂了 .theme-open 的子树内生效（#/open 页面与从它打开的抽屉），
+   仪表盘 / 任务队列 / 机器等页面不受影响。 */
+
+.theme-open {
+  --nat-bg: #070b14;
+  --nat-panel: #0d1422;
+  --nat-border: rgba(148, 163, 184, 0.14);
+  --nat-border-strong: rgba(148, 163, 184, 0.26);
+  --nat-hairline: rgba(94, 234, 212, 0.16);
+  --nat-text: #e8eef8;
+  --nat-text-sub: #b6c2d4;
+  --nat-text-weak: #8b9cb3;
+  --nat-accent: #2ee9d0;
+  --nat-accent-soft: rgba(46, 233, 208, 0.12);
+  --nat-shadow: 0 0 0 1px rgba(94, 234, 212, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  /* Element Plus 组件级变量都引用这批全局变量，改这里即可整体换肤 */
+  --el-bg-color: #0d1422;
+  --el-bg-color-overlay: #111a2b;
+  --el-fill-color-blank: #0a111e;
+  --el-fill-color-lighter: rgba(148, 163, 184, 0.06);
+  --el-fill-color-light: rgba(148, 163, 184, 0.08);
+  --el-fill-color: rgba(148, 163, 184, 0.12);
+  --el-fill-color-darker: rgba(148, 163, 184, 0.2);
+  --el-text-color-primary: #e8eef8;
+  --el-text-color-regular: #b6c2d4;
+  --el-text-color-secondary: #8b9cb3;
+  --el-text-color-placeholder: #64748b;
+  --el-text-color-disabled: #5b6b82;
+  --el-border-color: rgba(148, 163, 184, 0.24);
+  --el-border-color-light: rgba(148, 163, 184, 0.18);
+  --el-border-color-lighter: rgba(148, 163, 184, 0.14);
+  --el-border-color-extra-light: rgba(148, 163, 184, 0.1);
+  --el-border-color-hover: rgba(46, 233, 208, 0.5);
+  --el-disabled-bg-color: rgba(148, 163, 184, 0.08);
+  --el-disabled-text-color: #5b6b82;
+  --el-disabled-border-color: rgba(148, 163, 184, 0.16);
+  /* 实心主按钮 / 选中勾等「白色前景」在青色底上换成近黑，保证对比度 */
+  --el-color-white: #051019;
+  --el-color-primary: #2ee9d0;
+  --el-color-primary-light-3: #6ff2e0;
+  --el-color-primary-light-5: rgba(46, 233, 208, 0.4);
+  --el-color-primary-light-7: rgba(46, 233, 208, 0.25);
+  --el-color-primary-light-8: rgba(46, 233, 208, 0.2);
+  --el-color-primary-light-9: rgba(46, 233, 208, 0.1);
+  --el-color-primary-dark-2: #1fd4bc;
+  --el-color-success: #4ade80;
+  --el-color-success-light-8: rgba(74, 222, 128, 0.22);
+  --el-color-success-light-9: rgba(74, 222, 128, 0.1);
+  --el-color-warning: #fbbf24;
+  --el-color-warning-light-5: rgba(251, 191, 36, 0.45);
+  --el-color-warning-light-8: rgba(251, 191, 36, 0.22);
+  --el-color-warning-light-9: rgba(251, 191, 36, 0.1);
+  --el-color-danger: #f87171;
+  --el-color-danger-light-5: rgba(248, 113, 113, 0.45);
+  --el-color-danger-light-8: rgba(248, 113, 113, 0.22);
+  --el-color-danger-light-9: rgba(248, 113, 113, 0.1);
+  --el-color-error: #f87171;
+  --el-color-error-light-9: rgba(248, 113, 113, 0.12);
+  --el-color-info: #94a3b8;
+  --el-color-info-light-8: rgba(148, 163, 184, 0.22);
+  --el-color-info-light-9: rgba(148, 163, 184, 0.1);
+  --el-switch-off-color: rgba(148, 163, 184, 0.35);
+
+  color: var(--nat-text);
+}
+
+/* 上面「Element 微调」区给表头写了浅色 !important，这里在暗色作用域内反制 */
+.theme-open .el-table th.el-table__cell {
+  background: #101a2c !important;
+  color: var(--nat-text-weak);
+}
+
+.theme-open .el-table {
+  --el-table-row-hover-bg-color: rgba(46, 233, 208, 0.06);
+}
+
+/* 状态胶囊原浅色半透明底在暗画布上偏淡，用 currentColor 混一层实底 */
+.theme-open .status-pill {
+  background: color-mix(in srgb, currentColor 18%, #0d1422);
+  border-color: color-mix(in srgb, currentColor 42%, transparent);
+}
+
+.theme-open .code-inline {
+  background: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #b6c2d4;
+}
+
+/* ------------------------------------------------------------- 嵌入态（iframe） */
+
+/* 宿主 iframe 的画布与开放查询暗色底一致，避免加载/过渡瞬间露出浅灰 */
+html.nat-embed,
+html.nat-embed body {
+  background: #070b14;
+}
+
+/* 传送到 body 的弹层（确认框、下拉、toast）不在 .theme-open 子树内，单独跟暗色 */
+html.nat-open .el-overlay {
+  background: rgba(4, 8, 16, 0.62);
+}
+
+html.nat-open .el-message-box {
+  background: #111a2b;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  box-shadow: 0 0 0 1px rgba(94, 234, 212, 0.06), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --el-messagebox-title-color: #e8eef8;
+  --el-text-color-regular: #b6c2d4;
+  --el-color-primary: #2ee9d0;
+  --el-color-danger: #f87171;
+  --el-border-color-lighter: rgba(148, 163, 184, 0.18);
+  --el-fill-color-blank: #0d1422;
+}
+
+html.nat-open .el-message-box__title {
+  color: #e8eef8;
+}
+
+html.nat-open .el-message-box__content {
+  color: #b6c2d4;
+}
+
+html.nat-open .el-dropdown-menu,
+html.nat-open .el-select-dropdown,
+html.nat-open .el-popper.oc-pop,
+html.nat-open .el-popper.oc-menu,
+html.nat-open .el-picker__popper {
+  background: #111a2b;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #e8eef8;
+}
+
+html.nat-open .el-dropdown-menu__item,
+html.nat-open .el-select-dropdown__item {
+  color: #e8eef8;
+}
+
+html.nat-open .el-dropdown-menu__item:hover,
+html.nat-open .el-select-dropdown__item.hover,
+html.nat-open .el-select-dropdown__item.is-hovering {
+  background: rgba(46, 233, 208, 0.1);
+  color: #2ee9d0;
+}
+
+html.nat-open .el-message {
+  background: #111a2b;
+  border-color: rgba(148, 163, 184, 0.22);
+  --el-message-text-color: #e8eef8;
+}
+
+html.nat-open .el-button--primary {
+  --el-button-text-color: #051019;
+}
