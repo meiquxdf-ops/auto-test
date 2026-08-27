@@ -9,10 +9,9 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=@DATA_DIR@
-# 二进制读 ATEST_CONFIG；ATAGENT_CONFIG 仅作兼容别名，真正生效的是 --config
+# ATEST_CONFIG 是二进制唯一认的配置环境变量；显式 --config 优先，两者指同一份文件
 Environment=ATEST_CONFIG=@CONFIG@
-Environment=ATAGENT_CONFIG=@CONFIG@
-ExecStart=@BIN@ --config @CONFIG@
+ExecStart=@BIN@ run --config @CONFIG@
 
 Restart=always
 RestartSec=3s
