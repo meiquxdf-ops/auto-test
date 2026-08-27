@@ -30,6 +30,8 @@ interface FormState {
   timeoutSec: number
   operator: string
   conditionConfig: ConditionConfig | null
+  /** 任务终态后 POST 一次结果，试联调回调用 */
+  callbackUrl: string
 }
 
 function blank(): FormState {
@@ -41,6 +43,7 @@ function blank(): FormState {
     timeoutSec: 300,
     operator: localStorage.getItem(OPERATOR_KEY) || '',
     conditionConfig: null,
+    callbackUrl: '',
   }
 }
 
@@ -74,7 +77,15 @@ const {
   reconnect,
 } = useExecutionLog(selectedId)
 
-const valid = computed(() => form.command.trim().length > 0 && form.targets.length > 0)
+const callbackUrlError = computed(() => {
+  const v = form.callbackUrl.trim()
+  if (!v) return ''
+  return /^https?:\/\/.+/i.test(v) ? '' : '仅支持 http:// 或 https:// 地址'
+})
+
+const valid = computed(
+  () => form.command.trim().length > 0 && form.targets.length > 0 && !callbackUrlError.value,
+)
 
 const quickCommands = [
   { label: '主机信息', value: 'hostname && uname -a && uptime' },
@@ -96,6 +107,7 @@ function saveDraft() {
         timeoutSec: form.timeoutSec,
         operator: form.operator,
         conditionConfig: form.conditionConfig,
+        callbackUrl: form.callbackUrl,
       }),
     )
   } catch {
@@ -151,6 +163,7 @@ async function submit() {
       conditionConfig: form.conditionConfig,
       operator: form.operator.trim() || undefined,
       timeoutSec: form.timeoutSec,
+      callbackUrl: form.callbackUrl.trim() || undefined,
     })
     if (form.operator.trim()) localStorage.setItem(OPERATOR_KEY, form.operator.trim())
     saveDraft()
@@ -308,6 +321,22 @@ const logFootNote = computed(() => {
 
             <el-form-item label="操作人 operator">
               <el-input v-model="form.operator" placeholder="选填，会记录到执行上" />
+            </el-form-item>
+
+            <el-form-item :error="callbackUrlError || undefined">
+              <template #label>
+                <span>
+                  回调地址 callbackUrl
+                  <span class="muted">（选填，任务终态后 POST 一次结果，联调回调用）</span>
+                </span>
+              </template>
+              <el-input
+                v-model="form.callbackUrl"
+                placeholder="http://10.0.0.5:9000/notify"
+                spellcheck="false"
+                class="mono"
+                clearable
+              />
             </el-form-item>
 
             <el-collapse class="pg__collapse">

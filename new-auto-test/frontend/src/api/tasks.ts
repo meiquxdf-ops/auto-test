@@ -1,6 +1,6 @@
 import { http, post, unwrap, unwrapList } from './http'
 import { normalizeTask } from './normalize'
-import type { CreateTaskPayload, ExecutionStatus, RerunMode, Task } from './types'
+import type { BatchCreatePayload, CreateTaskPayload, ExecutionStatus, RerunMode, Task } from './types'
 
 export interface ListTasksQuery {
   status?: ExecutionStatus | ''
@@ -33,10 +33,26 @@ export async function createTask(payload: CreateTaskPayload): Promise<Task | nul
   if (payload.operator) body.operator = payload.operator
   if (payload.timeoutSec) body.timeoutSec = payload.timeoutSec
   if (payload.priority !== undefined) body.priority = payload.priority
+  if (payload.requestId) body.requestId = payload.requestId
+  if (payload.callbackUrl) body.callbackUrl = payload.callbackUrl
 
   const res = await http.post('/api/tasks', body)
   const data = unwrap<unknown>(res.data)
   return data ? normalizeTask(data) : null
+}
+
+/** 开放 API：一次请求建多条任务（不同命令/目标），共用一个 requestId，整单成功或整单失败 */
+export async function createTaskBatch(payload: BatchCreatePayload): Promise<{ requestId: string; tasks: Task[] }> {
+  const res = await http.post('/api/tasks/batch', payload)
+  const data = unwrap<Record<string, unknown>>(res.data) ?? {}
+  const tasks = Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : []
+  return { requestId: typeof data.requestId === 'string' ? data.requestId : payload.requestId, tasks }
+}
+
+/** 开放查询：按 requestId 拉该批全部任务（Server 上限 200 条） */
+export async function listTasksByRequestId(requestId: string): Promise<Task[]> {
+  const res = await http.get('/api/tasks', { params: { requestId } })
+  return unwrapList(res.data).map(normalizeTask)
 }
 
 export async function cancelTask(taskId: string): Promise<void> {

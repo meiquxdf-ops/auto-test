@@ -1,9 +1,11 @@
 import {
+  CALLBACK_STATUSES,
   EXECUTION_STATUSES,
   OTHER_STATUSES,
   CONDITION_OPERATORS,
   type Agent,
   type AgentStatus,
+  type CallbackStatus,
   type ConditionConfig,
   type ConditionOperator,
   type ConditionRule,
@@ -317,6 +319,9 @@ export function normalizeTask(input: unknown): Task {
   // 会被当成未知值落到 pending，队列页就会「跑完仍显示排队中」。
   const status = hasCounts ? aggregateStatus(counts, fallback) : fallback
 
+  const callbackRaw = String(pick(o, ['callbackStatus', 'callback_status']) ?? '').toLowerCase()
+  const callbackStatus = (CALLBACK_STATUSES.find((x) => x === callbackRaw) ?? 'none') as CallbackStatus
+
   const targets = strList(o, ['targets', 'target', 'agents', 'displayTags'])
   return {
     taskId: str(o, ['taskId', 'task_id', 'id']),
@@ -334,6 +339,12 @@ export function normalizeTask(input: unknown): Task {
     executions,
     counts,
     total: executions.length || targets.length,
+    requestId: optStr(o, ['requestId', 'request_id']),
+    callbackUrl: optStr(o, ['callbackUrl', 'callback_url']),
+    callbackStatus,
+    callbackAttempts: optNum(o, ['callbackAttempts', 'callback_attempts']),
+    callbackLastError: optStr(o, ['callbackLastError', 'callback_last_error']),
+    callbackLastAt: timestamp(o, ['callbackLastAt', 'callback_last_at']),
     raw: o,
   }
 }

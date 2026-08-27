@@ -40,6 +40,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测试下发', nav: 'playground' },
   },
   {
+    path: '/open',
+    name: 'open',
+    component: () => import('@/views/OpenConsoleView.vue'),
+    meta: { title: '开放查询', nav: 'open' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),

@@ -53,6 +53,11 @@ export interface ConditionConfig {
   other?: OtherStatus | null
 }
 
+/** 任务终态回调投递状态：无回调 / 待触发 / 投递中 / 成功 / 已放弃 */
+export type CallbackStatus = 'none' | 'pending' | 'running' | 'success' | 'failed'
+
+export const CALLBACK_STATUSES: CallbackStatus[] = ['none', 'pending', 'running', 'success', 'failed']
+
 /** 机器在线状态：在线 / 忙碌 / 失联 / 离线 */
 export type AgentStatus = 'online' | 'busy' | 'disconnected' | 'offline'
 
@@ -117,6 +122,13 @@ export interface Task {
   executions: Execution[]
   counts: Record<ExecutionStatus, number>
   total: number
+  /** 开放 API：创建时调用方自带的全局唯一键，一个 requestId 可挂多条任务 */
+  requestId?: string
+  callbackUrl?: string
+  callbackStatus: CallbackStatus
+  callbackAttempts?: number
+  callbackLastError?: string
+  callbackLastAt?: number | null
   raw: Record<string, unknown>
 }
 
@@ -166,6 +178,28 @@ export interface CreateTaskPayload {
   operator?: string
   timeoutSec?: number
   priority?: number
+  /** 开放 API 幂等键：^[A-Za-z0-9._-]{1,64}$，全局唯一；运维台可不填 */
+  requestId?: string
+  /** 任务终态（finished/canceled）后 POST 一次结果；仅 http/https */
+  callbackUrl?: string
+}
+
+/** POST /api/tasks/batch 的单条任务 */
+export interface BatchTaskItem {
+  name?: string
+  command: string
+  cwd?: string
+  env?: Record<string, string>
+  targets: string[]
+  conditionConfig?: ConditionConfig | null
+  operator?: string
+  timeoutSec?: number
+}
+
+export interface BatchCreatePayload {
+  requestId: string
+  callbackUrl?: string
+  items: BatchTaskItem[]
 }
 
 export type RerunMode = 'inplace' | 'new'

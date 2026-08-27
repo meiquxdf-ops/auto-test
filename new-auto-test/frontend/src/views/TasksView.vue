@@ -5,7 +5,9 @@ import { ElMessageBox } from 'element-plus'
 import { cancelTask, listTasks, reorderTasks, rerunTask } from '@/api/tasks'
 import { errorMessage, toastError, toastOk } from '@/api/http'
 import {
+  CALLBACK_STATUSES,
   EXECUTION_STATUSES,
+  type CallbackStatus,
   type Execution,
   type ExecutionStatus,
   type Task,
@@ -13,7 +15,7 @@ import {
 } from '@/api/types'
 import { countExecutions } from '@/utils/aggregate'
 import { durationBetween, formatFullTime, formatTime, truncateText } from '@/utils/format'
-import { isTerminal, statusMeta } from '@/utils/status'
+import { callbackStatusMeta, isTerminal, statusMeta } from '@/utils/status'
 import { useAgents } from '@/stores/agents'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -31,6 +33,7 @@ const error = ref('')
 const keyword = ref('')
 const statusFilter = ref<ExecutionStatus | ''>('')
 const machineFilter = ref('')
+const callbackFilter = ref<CallbackStatus | ''>('')
 const autoRefresh = ref(true)
 const lastLoadedAt = ref<number | null>(null)
 const acting = ref('')
@@ -62,6 +65,9 @@ onMounted(() => {
   if (typeof route.query.machine === 'string' && route.query.machine) {
     machineFilter.value = route.query.machine
   }
+  if (typeof route.query.requestId === 'string' && route.query.requestId) {
+    keyword.value = route.query.requestId
+  }
   if (route.query.create === '1') createVisible.value = true
   void load()
   timer = window.setInterval(() => {
@@ -88,11 +94,13 @@ const filtered = computed(() => {
   const machine = machineFilter.value
   return tasks.value.filter((t) => {
     if (statusFilter.value && t.status !== statusFilter.value) return false
+    if (callbackFilter.value && t.callbackStatus !== callbackFilter.value) return false
     if (machine && !taskTouchesMachine(t, machine)) return false
     if (!kw) return true
     return (
       t.command.toLowerCase().includes(kw) ||
       t.taskId.toLowerCase().includes(kw) ||
+      (t.requestId ?? '').toLowerCase().includes(kw) ||
       (t.operator ?? '').toLowerCase().includes(kw) ||
       t.targets.some((x) => x.toLowerCase().includes(kw)) ||
       t.executions.some((e) => (e.displayTag || e.agentId || '').toLowerCase().includes(kw))
@@ -262,6 +270,16 @@ function clearFilters() {
   keyword.value = ''
   statusFilter.value = ''
   machineFilter.value = ''
+  callbackFilter.value = ''
+}
+
+function callbackTooltip(task: Task): string {
+  const meta = callbackStatusMeta(task.callbackStatus)
+  const parts = [meta.desc]
+  if (task.callbackAttempts) parts.push(`已尝试 ${task.callbackAttempts} 次`)
+  if (task.callbackLastError) parts.push(`最近错误：${task.callbackLastError}`)
+  if (task.callbackUrl) parts.push(`回调地址：${task.callbackUrl}`)
+  return parts.join('；')
 }
 </script>
 
@@ -304,9 +322,17 @@ function clearFilters() {
         >
           <el-option v-for="m in machineOptions" :key="m" :label="m" :value="m" />
         </el-select>
+        <el-select v-model="callbackFilter" placeholder="回调状态" clearable style="width: 130px">
+          <el-option
+            v-for="s in CALLBACK_STATUSES"
+            :key="s"
+            :label="callbackStatusMeta(s).label"
+            :value="s"
+          />
+        </el-select>
         <el-input
           v-model="keyword"
-          placeholder="搜索命令 / taskId / 目标 / 操作人"
+          placeholder="搜索命令 / taskId / requestId / 目标 / 操作人"
           clearable
           :prefix-icon="'Search'"
           style="width: 260px"
@@ -332,9 +358,20 @@ function clearFilters() {
                 <span class="sub__title">执行明细（{{ row.executions.length }}）</span>
                 <span class="sub__meta">
                   taskId <CopyableId :value="row.taskId" :head="12" />
+                  <template v-if="row.requestId"> · requestId <CopyableId :value="row.requestId" :head="16" /></template>
                   <template v-if="row.cwd"> · cwd <code class="code-inline">{{ row.cwd }}</code></template>
                   <template v-if="row.timeoutSec"> · 超时 {{ row.timeoutSec }}s</template>
                 </span>
+              </div>
+
+              <div v-if="row.callbackUrl" class="sub__env">
+                <span class="muted">回调：</span>
+                <code class="code-inline">{{ row.callbackUrl }}</code>
+                <el-tag size="small" effect="light" :type="callbackStatusMeta(row.callbackStatus).type">
+                  {{ callbackStatusMeta(row.callbackStatus).label }}
+                </el-tag>
+                <span v-if="row.callbackAttempts" class="muted">已尝试 {{ row.callbackAttempts }} 次</span>
+                <span v-if="row.callbackLastError" class="muted">最近错误：{{ truncateText(row.callbackLastError, 80) }}</span>
               </div>
 
               <div v-if="row.env && Object.keys(row.env).length" class="sub__env">
@@ -455,6 +492,26 @@ function clearFilters() {
               </div>
               <span class="prog__targets muted">{{ truncateText(row.targets.join('、'), 28) || '-' }}</span>
             </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="开放调用 / 回调" width="176">
+          <template #default="{ row }">
+            <div v-if="row.requestId || row.callbackStatus !== 'none'" class="open-cell">
+              <CopyableId v-if="row.requestId" :value="row.requestId" :head="12" />
+              <span v-else class="muted">运维台创建</span>
+              <el-tooltip :content="callbackTooltip(row)" placement="top" :show-after="300">
+                <el-tag
+                  v-if="row.callbackStatus !== 'none'"
+                  size="small"
+                  effect="light"
+                  :type="callbackStatusMeta(row.callbackStatus).type"
+                >
+                  回调{{ callbackStatusMeta(row.callbackStatus).label }}
+                </el-tag>
+              </el-tooltip>
+            </div>
+            <span v-else class="muted">-</span>
           </template>
         </el-table-column>
 
@@ -611,6 +668,14 @@ function clearFilters() {
 }
 
 .time-cell {
+  font-size: 12px;
+}
+
+.open-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   font-size: 12px;
 }
 

@@ -1,4 +1,4 @@
-import type { AgentStatus, ExecutionStatus } from '@/api/types'
+import type { AgentStatus, CallbackStatus, ExecutionStatus } from '@/api/types'
 
 export interface StatusMeta {
   label: string
@@ -99,4 +99,24 @@ export const CONDITION_OPERATOR_LABEL: Record<string, string> = {
   'not-equals': '不等于',
   include: '包含',
   regex: '正则匹配',
+}
+
+export interface CallbackStatusMeta {
+  label: string
+  /** el-tag type */
+  type: 'info' | 'primary' | 'warning' | 'success' | 'danger'
+  desc: string
+}
+
+/** 任务终态回调的投递状态（不是任务本身的状态） */
+export const CALLBACK_STATUS_META: Record<CallbackStatus, CallbackStatusMeta> = {
+  none: { label: '无回调', type: 'info', desc: '创建时未填 callbackUrl' },
+  pending: { label: '待触发', type: 'primary', desc: '任务到达终态后自动 POST 一次结果' },
+  running: { label: '投递中', type: 'warning', desc: '正在尝试回调（失败按 1s/2s/4s/8s 退避重试）' },
+  success: { label: '已送达', type: 'success', desc: '对方返回 2xx' },
+  failed: { label: '已放弃', type: 'danger', desc: '重试 5 次仍未拿到 2xx，只放弃通知，不影响任务结果' },
+}
+
+export function callbackStatusMeta(status: CallbackStatus | undefined): CallbackStatusMeta {
+  return CALLBACK_STATUS_META[status ?? 'none'] ?? CALLBACK_STATUS_META.none
 }

@@ -28,6 +28,10 @@ interface FormState {
   timeoutSec: number
   operator: string
   conditionConfig: ConditionConfig | null
+  /** 开放调用的幂等键，全局唯一；运维台一般留空 */
+  requestId: string
+  /** 任务终态后 POST 一次结果 */
+  callbackUrl: string
 }
 
 const DRAFT_KEY = 'nat.taskDraft'
@@ -42,6 +46,8 @@ function blank(): FormState {
     timeoutSec: 1800,
     operator: localStorage.getItem(OPERATOR_KEY) || '',
     conditionConfig: null,
+    requestId: '',
+    callbackUrl: '',
   }
 }
 
@@ -71,6 +77,8 @@ function saveDraft() {
         timeoutSec: form.timeoutSec,
         operator: form.operator,
         conditionConfig: form.conditionConfig,
+        // requestId 全局唯一，草稿里存了必然 409，故意不存；回调地址可以复用
+        callbackUrl: form.callbackUrl,
       }),
     )
   } catch {
@@ -102,8 +110,25 @@ const timeoutError = computed(() => {
   return ''
 })
 
+const requestIdError = computed(() => {
+  const v = form.requestId.trim()
+  if (!v) return ''
+  return /^[A-Za-z0-9._-]{1,64}$/.test(v) ? '' : '只允许字母、数字和 . _ -，长度 1-64'
+})
+
+const callbackUrlError = computed(() => {
+  const v = form.callbackUrl.trim()
+  if (!v) return ''
+  return /^https?:\/\/.+/i.test(v) ? '' : '仅支持 http:// 或 https:// 地址'
+})
+
 const valid = computed(
-  () => form.command.trim().length > 0 && form.targets.length > 0 && !timeoutError.value,
+  () =>
+    form.command.trim().length > 0 &&
+    form.targets.length > 0 &&
+    !timeoutError.value &&
+    !requestIdError.value &&
+    !callbackUrlError.value,
 )
 
 const commandLines = computed(() => form.command.split('\n').filter((l) => l.trim()).length)
@@ -134,6 +159,8 @@ async function submit() {
       conditionConfig: form.conditionConfig,
       operator: form.operator.trim() || undefined,
       timeoutSec: form.timeoutSec,
+      requestId: form.requestId.trim() || undefined,
+      callbackUrl: form.callbackUrl.trim() || undefined,
     })
     if (form.operator.trim()) localStorage.setItem(OPERATOR_KEY, form.operator.trim())
     saveDraft()
@@ -251,6 +278,39 @@ const timeoutPresets = [
           <el-form-item label="判定配置 conditionConfig">
             <ConditionEditor v-model="form.conditionConfig" />
           </el-form-item>
+
+          <div class="cd__grid">
+            <el-form-item :error="callbackUrlError || undefined">
+              <template #label>
+                <span class="lbl">
+                  回调地址 callbackUrl
+                  <span class="lbl__hint">任务终态后 POST 一次结果，2xx 算送达</span>
+                </span>
+              </template>
+              <el-input
+                v-model="form.callbackUrl"
+                placeholder="选填，如 http://10.0.0.5:9000/notify"
+                spellcheck="false"
+                class="mono"
+                clearable
+              />
+            </el-form-item>
+            <el-form-item :error="requestIdError || undefined">
+              <template #label>
+                <span class="lbl">
+                  requestId
+                  <span class="lbl__hint">开放调用的查询键，全局唯一，运维台可留空</span>
+                </span>
+              </template>
+              <el-input
+                v-model="form.requestId"
+                placeholder="选填，^[A-Za-z0-9._-]{1,64}$"
+                spellcheck="false"
+                class="mono"
+                clearable
+              />
+            </el-form-item>
+          </div>
         </el-form>
       </div>
 

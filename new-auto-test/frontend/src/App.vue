@@ -22,6 +22,7 @@ const navItems = [
   { key: 'tasks', to: '/tasks', label: '任务队列', icon: 'Tickets', desc: '创建、排序、取消、重跑' },
   { key: 'timeline', to: '/timeline', label: '时间线', icon: 'Histogram', desc: 'agent / server 事件对账' },
   { key: 'playground', to: '/playground', label: '测试下发', icon: 'MagicStick', desc: '单机实验与实时跟日志' },
+  { key: 'open', to: '/open', label: '开放查询', icon: 'Link', desc: '按 requestId 查任务与回调' },
 ]
 
 const activeNav = computed(() => (route.meta.nav as string | undefined) ?? '')
