@@ -62,7 +62,7 @@ function openFull() {
 </script>
 
 <template>
-  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的暗色变量 -->
+  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的浅色纸面变量（日志窗口本身仍是黑终端） -->
   <el-drawer
     v-model="visible"
     class="theme-open"

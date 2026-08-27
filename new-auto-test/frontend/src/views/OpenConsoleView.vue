@@ -967,10 +967,10 @@ async function copySnippet() {
 <style scoped>
 /* ------------------------------------------------------------ 画布 */
 
-/* 暗色画布：纯色平底，不加网格/纹理/滤镜 */
+/* 纸面画布：纯色平底，不加网格/纹理/滤镜 */
 .oc {
   min-height: 100%;
-  background-color: #111113;
+  background-color: #f7f6f3;
 }
 
 /* 嵌入态：宿主已有标题与留白，页内只留必要间距 */
@@ -1021,7 +1021,7 @@ async function copySnippet() {
 }
 
 .oc__hint.is-error {
-  color: #f87171;
+  color: #b91c1c;
 }
 
 .oc__bar-right {
@@ -1039,9 +1039,9 @@ async function copySnippet() {
   max-width: 280px;
   min-width: 0;
   padding: 3px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(20, 18, 16, 0.1);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(20, 18, 16, 0.03);
   font-size: 12px;
 }
 
@@ -1103,9 +1103,9 @@ async function copySnippet() {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
   margin-top: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(20, 18, 16, 0.1);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(20, 18, 16, 0.02);
   overflow: hidden;
 }
 
@@ -1116,7 +1116,7 @@ async function copySnippet() {
   gap: 2px;
   min-width: 0;
   padding: 10px 6px 9px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(20, 18, 16, 0.08);
 }
 
 .oc-ov__stat:first-child {
@@ -1143,7 +1143,7 @@ async function copySnippet() {
   }
 
   .oc-ov__stat {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(20, 18, 16, 0.08);
   }
 
   .oc-ov__stat:nth-child(-n + 4) {
@@ -1169,11 +1169,11 @@ async function copySnippet() {
 
 /* 进度轨：纯色填充，不加渐变和光晕 */
 .oc-ov__prog-bar :deep(.el-progress-bar__outer) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(20, 18, 16, 0.08);
 }
 
 .oc-ov__prog-bar :deep(.el-progress-bar__inner) {
-  background: #3b82f6;
+  background: #1c1917;
 }
 
 .oc-ov__prog-num {
@@ -1217,7 +1217,7 @@ async function copySnippet() {
 }
 
 .oc-ov__live {
-  color: #60a5fa;
+  color: #1c1917;
   font-size: 12px;
 }
 
@@ -1260,7 +1260,7 @@ async function copySnippet() {
   display: block;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12.5px;
-  color: #d4d4d8;
+  color: #1c1917;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1289,7 +1289,7 @@ async function copySnippet() {
 }
 
 .time-live {
-  color: #60a5fa;
+  color: #1c1917;
   font-size: 12px;
 }
 
@@ -1311,24 +1311,25 @@ async function copySnippet() {
   padding: 5px 6px;
 }
 
+/* 行内文字按钮走墨色，白底上要有存在感；危险操作用哑光红 */
 .acts :deep(.el-button.is-text),
 .acts :deep(.el-button.is-link) {
-  color: #60a5fa;
+  color: #1c1917;
 }
 
 .acts :deep(.el-button.is-text.el-button--danger) {
-  color: #f87171;
+  color: #b91c1c;
 }
 
 /* ------------------------------------------------------------ 展开面板 */
 
 :deep(.el-table__expanded-cell) {
   padding: 0;
-  background: #111113;
+  background: #f7f6f3;
 }
 
 :deep(.el-table__expanded-cell:hover) {
-  background: #111113 !important;
+  background: #f7f6f3 !important;
 }
 
 .detail {
@@ -1371,20 +1372,20 @@ async function copySnippet() {
   opacity: 0.55;
 }
 
-/* EmptyState 的浅色图标底在暗色画布上换成半透明层 */
+/* EmptyState 默认的冷灰/冷蓝图标底在暖纸画布上换成暖墨色调 */
 .oc :deep(.empty__icon) {
-  background: rgba(255, 255, 255, 0.06);
-  color: #71717a;
+  background: rgba(20, 18, 16, 0.05);
+  color: #a8a29e;
 }
 
 .oc :deep(.empty__icon--error) {
-  background: rgba(248, 113, 113, 0.1);
-  color: #f87171;
+  background: rgba(185, 28, 28, 0.08);
+  color: #b91c1c;
 }
 
 .oc :deep(.empty__icon--search) {
-  background: rgba(96, 165, 250, 0.1);
-  color: #60a5fa;
+  background: rgba(20, 18, 16, 0.05);
+  color: #57534e;
 }
 
 /* ------------------------------------------------------------ 空态 / 速览 */
@@ -1411,12 +1412,12 @@ async function copySnippet() {
   line-height: 1.95;
 }
 
-/* 终端卡片：纯色深底 + 中性发丝线 */
+/* 接口示例卡：暖纸底 + 发丝线，跟浅色主题一体（真正的日志窗口仍是黑终端） */
 .oc__code {
   position: relative;
   border: 1px solid var(--nat-hairline);
   border-radius: 10px;
-  background: #0c0c0e;
+  background: #f3f1ed;
 }
 
 .oc__copy {
@@ -1432,7 +1433,7 @@ async function copySnippet() {
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.75;
-  color: #a1a1aa;
+  color: #1c1917;
   white-space: pre-wrap;
   word-break: break-word;
 }

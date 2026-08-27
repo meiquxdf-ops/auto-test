@@ -14,7 +14,7 @@ const { agents, sseState, lastUpdatedAt, reconnect, refresh } = useAgents()
 /** 嵌入宿主（iframe 或 embed=1）：去掉侧栏 / 顶栏，页面占满整个 iframe */
 const embedded = computed(() => isEmbed(route.query))
 
-/** 开放查询页（含嵌入）给 html 打标，让传送到 body 的确认框/下拉也走暗色 */
+/** 开放查询页（含嵌入）给 html 打标，让传送到 body 的确认框/下拉也走浅色纸面主题 */
 const openTheme = computed(() => embedded.value || route.meta.nav === 'open')
 
 watch(

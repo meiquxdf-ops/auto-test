@@ -413,127 +413,128 @@ body {
   }
 }
 
-/* ------------------------------------------------------------- 开放查询暗色主题
+/* ------------------------------------------------------------- 开放查询浅色纸面主题
+   暖纸底 + 墨色前景（Stripe / Linear 浅色调性），方便嵌进别的系统。
    只在挂了 .theme-open 的子树内生效（#/open 页面与从它打开的抽屉），
    仪表盘 / 任务队列 / 机器等页面不受影响。 */
 
 .theme-open {
-  --nat-bg: #111113;
-  --nat-panel: #18181b;
-  --nat-border: rgba(255, 255, 255, 0.08);
-  --nat-border-strong: rgba(255, 255, 255, 0.14);
-  --nat-hairline: rgba(255, 255, 255, 0.08);
-  --nat-text: #f4f4f5;
-  --nat-text-sub: #a1a1aa;
-  --nat-text-weak: #71717a;
-  --nat-accent: #60a5fa;
-  --nat-accent-soft: rgba(96, 165, 250, 0.1);
-  --nat-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --nat-bg: #f7f6f3;
+  --nat-panel: #ffffff;
+  --nat-border: rgba(20, 18, 16, 0.1);
+  --nat-border-strong: rgba(20, 18, 16, 0.18);
+  --nat-hairline: rgba(20, 18, 16, 0.1);
+  --nat-text: #1c1917;
+  --nat-text-sub: #57534e;
+  --nat-text-weak: #a8a29e;
+  --nat-accent: #1c1917;
+  --nat-accent-soft: rgba(28, 25, 23, 0.06);
+  --nat-shadow: 0 1px 2px rgba(20, 18, 16, 0.05);
 
   /* Element Plus 组件级变量都引用这批全局变量，改这里即可整体换肤 */
-  --el-bg-color: #18181b;
-  --el-bg-color-overlay: #1f1f23;
-  --el-fill-color-blank: #111113;
-  --el-fill-color-lighter: rgba(255, 255, 255, 0.04);
-  --el-fill-color-light: rgba(255, 255, 255, 0.06);
-  --el-fill-color: rgba(255, 255, 255, 0.08);
-  --el-fill-color-darker: rgba(255, 255, 255, 0.14);
-  --el-text-color-primary: #f4f4f5;
-  --el-text-color-regular: #a1a1aa;
-  --el-text-color-secondary: #71717a;
-  --el-text-color-placeholder: #52525b;
-  --el-text-color-disabled: #52525b;
-  --el-border-color: rgba(255, 255, 255, 0.14);
-  --el-border-color-light: rgba(255, 255, 255, 0.1);
-  --el-border-color-lighter: rgba(255, 255, 255, 0.08);
-  --el-border-color-extra-light: rgba(255, 255, 255, 0.06);
-  --el-border-color-hover: rgba(96, 165, 250, 0.5);
-  --el-disabled-bg-color: rgba(255, 255, 255, 0.05);
-  --el-disabled-text-color: #52525b;
-  --el-disabled-border-color: rgba(255, 255, 255, 0.1);
-  /* 实心主按钮是蓝底，白色前景保持纯白即可有足够对比度 */
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-lighter: rgba(20, 18, 16, 0.03);
+  --el-fill-color-light: rgba(20, 18, 16, 0.05);
+  --el-fill-color: rgba(20, 18, 16, 0.08);
+  --el-fill-color-darker: rgba(20, 18, 16, 0.12);
+  --el-text-color-primary: #1c1917;
+  --el-text-color-regular: #57534e;
+  --el-text-color-secondary: #a8a29e;
+  --el-text-color-placeholder: #a8a29e;
+  --el-text-color-disabled: #a8a29e;
+  --el-border-color: rgba(20, 18, 16, 0.18);
+  --el-border-color-light: rgba(20, 18, 16, 0.14);
+  --el-border-color-lighter: rgba(20, 18, 16, 0.1);
+  --el-border-color-extra-light: rgba(20, 18, 16, 0.06);
+  --el-border-color-hover: rgba(20, 18, 16, 0.4);
+  --el-disabled-bg-color: rgba(20, 18, 16, 0.04);
+  --el-disabled-text-color: #a8a29e;
+  --el-disabled-border-color: rgba(20, 18, 16, 0.12);
+  /* 实心主按钮是墨色底，白色前景；hover 压深到近纯黑 */
   --el-color-white: #ffffff;
-  --el-color-primary: #3b82f6;
-  --el-color-primary-light-3: #60a5fa;
-  --el-color-primary-light-5: rgba(96, 165, 250, 0.4);
-  --el-color-primary-light-7: rgba(96, 165, 250, 0.25);
-  --el-color-primary-light-8: rgba(96, 165, 250, 0.2);
-  --el-color-primary-light-9: rgba(96, 165, 250, 0.1);
-  --el-color-primary-dark-2: #2563eb;
-  --el-color-success: #4ade80;
-  --el-color-success-light-8: rgba(74, 222, 128, 0.16);
-  --el-color-success-light-9: rgba(74, 222, 128, 0.08);
-  --el-color-warning: #fbbf24;
-  --el-color-warning-light-5: rgba(251, 191, 36, 0.4);
-  --el-color-warning-light-8: rgba(251, 191, 36, 0.16);
-  --el-color-warning-light-9: rgba(251, 191, 36, 0.08);
-  --el-color-danger: #f87171;
-  --el-color-danger-light-5: rgba(248, 113, 113, 0.4);
-  --el-color-danger-light-8: rgba(248, 113, 113, 0.16);
-  --el-color-danger-light-9: rgba(248, 113, 113, 0.08);
-  --el-color-error: #f87171;
-  --el-color-error-light-9: rgba(248, 113, 113, 0.08);
-  --el-color-info: #a1a1aa;
-  --el-color-info-light-8: rgba(161, 161, 170, 0.16);
-  --el-color-info-light-9: rgba(161, 161, 170, 0.08);
-  --el-switch-off-color: rgba(255, 255, 255, 0.25);
+  --el-color-primary: #1c1917;
+  --el-color-primary-light-3: #0c0a09;
+  --el-color-primary-light-5: rgba(28, 25, 23, 0.4);
+  --el-color-primary-light-7: rgba(28, 25, 23, 0.24);
+  --el-color-primary-light-8: rgba(28, 25, 23, 0.14);
+  --el-color-primary-light-9: rgba(28, 25, 23, 0.06);
+  --el-color-primary-dark-2: #0c0a09;
+  --el-color-success: #15803d;
+  --el-color-success-light-8: rgba(21, 128, 61, 0.14);
+  --el-color-success-light-9: rgba(21, 128, 61, 0.07);
+  --el-color-warning: #b45309;
+  --el-color-warning-light-5: rgba(180, 83, 9, 0.4);
+  --el-color-warning-light-8: rgba(180, 83, 9, 0.14);
+  --el-color-warning-light-9: rgba(180, 83, 9, 0.07);
+  --el-color-danger: #b91c1c;
+  --el-color-danger-light-5: rgba(185, 28, 28, 0.4);
+  --el-color-danger-light-8: rgba(185, 28, 28, 0.14);
+  --el-color-danger-light-9: rgba(185, 28, 28, 0.07);
+  --el-color-error: #b91c1c;
+  --el-color-error-light-9: rgba(185, 28, 28, 0.07);
+  --el-color-info: #57534e;
+  --el-color-info-light-8: rgba(87, 83, 78, 0.14);
+  --el-color-info-light-9: rgba(87, 83, 78, 0.07);
+  --el-switch-off-color: rgba(20, 18, 16, 0.25);
 
   color: var(--nat-text);
 }
 
-/* 上面「Element 微调」区给表头写了浅色 !important，这里在暗色作用域内反制 */
+/* 上面「Element 微调」区给表头写了冷灰 !important，这里在暖纸作用域内换成暖色 */
 .theme-open .el-table th.el-table__cell {
-  background: #1f1f23 !important;
-  color: var(--nat-text-weak);
+  background: #f3f1ed !important;
+  color: var(--nat-text-sub);
 }
 
 .theme-open .el-table {
-  --el-table-row-hover-bg-color: rgba(96, 165, 250, 0.06);
-}
-
-/* 状态胶囊原浅色半透明底在暗画布上偏淡，用 currentColor 混一层实底 */
-.theme-open .status-pill {
-  background: color-mix(in srgb, currentColor 14%, #18181b);
-  border-color: color-mix(in srgb, currentColor 36%, transparent);
+  --el-table-row-hover-bg-color: rgba(20, 18, 16, 0.03);
 }
 
 .theme-open .code-inline {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: #a1a1aa;
+  background: #f3f1ed;
+  border-color: rgba(20, 18, 16, 0.1);
+  color: #57534e;
 }
 
 /* ------------------------------------------------------------- 嵌入态（iframe） */
 
-/* 宿主 iframe 的画布与开放查询暗色底一致，避免加载/过渡瞬间露出浅灰 */
+/* 宿主 iframe 的画布与开放查询纸面底一致，避免加载/过渡瞬间露出冷灰 */
 html.nat-embed,
 html.nat-embed body {
-  background: #111113;
+  background: #f7f6f3;
 }
 
-/* 传送到 body 的弹层（确认框、下拉、toast）不在 .theme-open 子树内，单独跟暗色 */
+/* 传送到 body 的弹层（确认框、下拉、toast）不在 .theme-open 子树内，单独跟浅色纸面 */
 html.nat-open .el-overlay {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(28, 25, 23, 0.4);
 }
 
 html.nat-open .el-message-box {
-  background: #1f1f23;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --el-messagebox-title-color: #f4f4f5;
-  --el-text-color-regular: #a1a1aa;
-  --el-color-primary: #3b82f6;
-  --el-color-danger: #f87171;
-  --el-border-color-lighter: rgba(255, 255, 255, 0.08);
-  --el-fill-color-blank: #18181b;
+  background: #ffffff;
+  border: 1px solid rgba(20, 18, 16, 0.1);
+  box-shadow: 0 12px 32px rgba(20, 18, 16, 0.14);
+  --el-messagebox-title-color: #1c1917;
+  --el-text-color-regular: #57534e;
+  --el-color-white: #ffffff;
+  --el-color-primary: #1c1917;
+  --el-color-primary-light-3: #0c0a09;
+  --el-color-primary-dark-2: #0c0a09;
+  --el-color-danger: #b91c1c;
+  --el-color-danger-light-3: #991b1b;
+  --el-color-danger-dark-2: #991b1b;
+  --el-color-warning: #b45309;
+  --el-border-color-lighter: rgba(20, 18, 16, 0.1);
+  --el-fill-color-blank: #ffffff;
 }
 
 html.nat-open .el-message-box__title {
-  color: #f4f4f5;
+  color: #1c1917;
 }
 
 html.nat-open .el-message-box__content {
-  color: #a1a1aa;
+  color: #57534e;
 }
 
 html.nat-open .el-dropdown-menu,
@@ -541,25 +542,38 @@ html.nat-open .el-select-dropdown,
 html.nat-open .el-popper.oc-pop,
 html.nat-open .el-popper.oc-menu,
 html.nat-open .el-picker__popper {
-  background: #1f1f23;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #f4f4f5;
+  background: #ffffff;
+  border: 1px solid rgba(20, 18, 16, 0.1);
+  color: #1c1917;
+}
+
+/* 提示气泡默认走 dark effect，箭头也一并改成白面发丝线 */
+html.nat-open .el-popper.oc-pop .el-popper__arrow::before,
+html.nat-open .el-popper.oc-menu .el-popper__arrow::before {
+  background: #ffffff;
+  border-color: rgba(20, 18, 16, 0.1);
 }
 
 html.nat-open .el-dropdown-menu__item,
 html.nat-open .el-select-dropdown__item {
-  color: #f4f4f5;
+  color: #1c1917;
 }
 
 html.nat-open .el-dropdown-menu__item:hover,
 html.nat-open .el-select-dropdown__item.hover,
 html.nat-open .el-select-dropdown__item.is-hovering {
-  background: rgba(96, 165, 250, 0.1);
-  color: #60a5fa;
+  background: rgba(20, 18, 16, 0.05);
+  color: #1c1917;
 }
 
 html.nat-open .el-message {
-  background: #1f1f23;
-  border-color: rgba(255, 255, 255, 0.08);
-  --el-message-text-color: #f4f4f5;
+  background: #ffffff;
+  border-color: rgba(20, 18, 16, 0.1);
+  box-shadow: 0 4px 16px rgba(20, 18, 16, 0.1);
+  --el-message-text-color: #1c1917;
+  --el-color-success: #15803d;
+  --el-color-warning: #b45309;
+  --el-color-danger: #b91c1c;
+  --el-color-error: #b91c1c;
+  --el-color-info: #57534e;
 }

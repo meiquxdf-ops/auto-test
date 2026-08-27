@@ -59,7 +59,7 @@ function gotoFull() {
 </script>
 
 <template>
-  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的暗色变量 -->
+  <!-- class 会透传到 .el-drawer 面板：theme-open 让抽屉整体走开放查询的浅色纸面变量 -->
   <el-drawer
     v-model="visible"
     class="theme-open"
@@ -158,18 +158,9 @@ function gotoFull() {
   padding-top: 8px;
 }
 
-/* 时间线卡片写死了白底，在暗色抽屉里换成深色面 */
-.drawer :deep(.tl__card) {
-  background: #1f1f23;
-  box-shadow: none;
-}
-
-.drawer :deep(.tl__node) {
-  border-color: #18181b;
-}
-
+/* 时间线卡片本来就是白底，浅色抽屉里直接可用；只把冷灰空态图标调成暖墨色调 */
 .drawer :deep(.empty__icon) {
-  background: rgba(255, 255, 255, 0.06);
-  color: #71717a;
+  background: rgba(20, 18, 16, 0.05);
+  color: #a8a29e;
 }
 </style>
