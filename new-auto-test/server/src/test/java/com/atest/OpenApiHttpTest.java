@@ -65,14 +65,36 @@ class OpenApiHttpTest {
         assertThat(dup.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(dup.getBody().get("code").asText()).isEqualTo("conflict");
 
-        // unknown target rejects the whole batch with 400
-        ResponseEntity<JsonNode> bad = postJson("/api/tasks/batch", """
+        // partial success: the unknown-target item is rejected alone, the good one is created
+        ResponseEntity<JsonNode> mixed = postJson("/api/tasks/batch", """
                 {"requestId":"http.batch-2","items":[
                   {"command":"echo a","targets":["http-agent"]},
                   {"command":"echo b","targets":["ghost-agent"]}
                 ]}""");
-        assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(bad.getBody().get("message").asText()).contains("items[1]");
+        assertThat(mixed.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(mixed.getBody().get("tasks")).hasSize(1);
+        assertThat(mixed.getBody().get("errors")).hasSize(1);
+        assertThat(mixed.getBody().get("errors").get(0).get("index").asInt()).isEqualTo(1);
+        assertThat(mixed.getBody().get("errors").get(0).get("message").asText()).contains("ghost-agent");
+
+        // every item invalid -> 400 with errors[], and the requestId is NOT consumed
+        ResponseEntity<JsonNode> allBad = postJson("/api/tasks/batch", """
+                {"requestId":"http.batch-3","items":[
+                  {"command":"","targets":["http-agent"]},
+                  {"command":"echo b","targets":["ghost-agent"]}
+                ]}""");
+        assertThat(allBad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(allBad.getBody().get("errors")).hasSize(2);
+        assertThat(allBad.getBody().get("requestId").asText()).isEqualTo("http.batch-3");
+
+        // …so the same requestId can be retried with a fixed payload
+        ResponseEntity<JsonNode> retried = postJson("/api/tasks/batch", """
+                {"requestId":"http.batch-3","items":[
+                  {"command":"echo fixed","targets":["http-agent"]}
+                ]}""");
+        assertThat(retried.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(retried.getBody().get("tasks")).hasSize(1);
+        assertThat(retried.getBody().get("errors")).isEmpty();
 
         // open query: every task of the batch, with executions and callback fields
         ResponseEntity<JsonNode> query = rest.getForEntity("/api/tasks?requestId=http.batch-1", JsonNode.class);
@@ -86,8 +108,9 @@ class OpenApiHttpTest {
         }
         assertThat(query.getBody().get("items").get(1).get("name").asText()).isEqualTo("第二条");
 
-        // nothing under the rejected batch id
-        ResponseEntity<JsonNode> empty = rest.getForEntity("/api/tasks?requestId=http.batch-2", JsonNode.class);
-        assertThat(empty.getBody().get("items")).isEmpty();
+        // the partial batch holds exactly its one surviving task
+        ResponseEntity<JsonNode> partial = rest.getForEntity("/api/tasks?requestId=http.batch-2", JsonNode.class);
+        assertThat(partial.getBody().get("items")).hasSize(1);
+        assertThat(partial.getBody().get("items").get(0).get("command").asText()).isEqualTo("echo a");
     }
 }

@@ -32,7 +32,11 @@ public class TaskController {
         return taskService.create(request);
     }
 
-    /** Open API: several tasks in one request, grouped by one requestId; all-or-nothing. */
+    /**
+     * Open API: several tasks in one request, grouped by one requestId. Partial success — invalid
+     * items land in {@code errors[]}, valid ones are created; 400 only when every item fails
+     * (requestId not consumed) or the requestId itself is missing / malformed / duplicate.
+     */
     @PostMapping("/batch")
     public Map<String, Object> createBatch(@RequestBody BatchCreateTaskRequest request) {
         return taskService.createBatch(request);

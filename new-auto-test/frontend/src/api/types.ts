@@ -202,6 +202,12 @@ export interface BatchCreatePayload {
   items: BatchTaskItem[]
 }
 
+/** 批量创建里被拒绝的单条：index 指向 items 下标 */
+export interface BatchItemError {
+  index: number
+  message: string
+}
+
 export type RerunMode = 'inplace' | 'new'
 
 /** 创建任务表单的可预填字段（「以此为模板」用） */

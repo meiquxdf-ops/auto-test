@@ -88,9 +88,9 @@ public class AtestProperties {
     @Getter
     @Setter
     public static class Callback {
-        /** total delivery attempts before the callback is marked failed */
-        private int maxAttempts = 5;
-        /** wait before attempt N+1 is backoffBaseMs << (N-1): 1s, 2s, 4s, 8s, 16s... */
+        /** total delivery attempts before the callback is marked failed: 1 initial + 5 retries */
+        private int maxAttempts = 6;
+        /** wait before attempt N+1 is backoffBaseMs << (N-1): 1s, 2s, 4s, 8s, 16s */
         private long backoffBaseMs = 1000;
         /** connect + response timeout of a single attempt */
         private long timeoutMs = 10_000;

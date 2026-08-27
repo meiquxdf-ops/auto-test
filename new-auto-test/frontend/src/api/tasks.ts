@@ -1,6 +1,6 @@
 import { http, post, unwrap, unwrapList } from './http'
 import { normalizeTask } from './normalize'
-import type { BatchCreatePayload, CreateTaskPayload, ExecutionStatus, RerunMode, Task } from './types'
+import type { BatchCreatePayload, BatchItemError, CreateTaskPayload, ExecutionStatus, RerunMode, Task } from './types'
 
 export interface ListTasksQuery {
   status?: ExecutionStatus | ''
@@ -41,12 +41,24 @@ export async function createTask(payload: CreateTaskPayload): Promise<Task | nul
   return data ? normalizeTask(data) : null
 }
 
-/** 开放 API：一次请求建多条任务（不同命令/目标），共用一个 requestId，整单成功或整单失败 */
-export async function createTaskBatch(payload: BatchCreatePayload): Promise<{ requestId: string; tasks: Task[] }> {
+/**
+ * 开放 API：一次请求建多条任务（不同命令/目标），共用一个 requestId。
+ * 逐条部分成功：坏的 item 只拒绝那一条（落在 errors[{index,message}]），其余照建；
+ * 全部 item 都失败时整单 400 且 requestId 不占用，可修正后原样重试。
+ */
+export async function createTaskBatch(
+  payload: BatchCreatePayload,
+): Promise<{ requestId: string; tasks: Task[]; errors: BatchItemError[] }> {
   const res = await http.post('/api/tasks/batch', payload)
   const data = unwrap<Record<string, unknown>>(res.data) ?? {}
   const tasks = Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : []
-  return { requestId: typeof data.requestId === 'string' ? data.requestId : payload.requestId, tasks }
+  const errors = Array.isArray(data.errors)
+    ? data.errors.map((e) => {
+        const d = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>
+        return { index: Number(d.index ?? -1), message: String(d.message ?? '') }
+      })
+    : []
+  return { requestId: typeof data.requestId === 'string' ? data.requestId : payload.requestId, tasks, errors }
 }
 
 /** 开放查询：按 requestId 拉该批全部任务（Server 上限 200 条） */

@@ -9,7 +9,9 @@ import lombok.Setter;
 
 /**
  * One HTTP request that creates several tasks (different commands / targets) sharing one
- * requestId. All-or-nothing: any invalid item rejects the whole request.
+ * requestId. Partial success: an invalid item only rejects that item (reported in
+ * {@code errors[{index,message}]}), the rest are created. Only a missing / malformed / duplicate
+ * requestId — or every single item failing — rejects the whole request.
  */
 @Getter
 @Setter

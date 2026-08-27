@@ -41,13 +41,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 
 /**
- * Open API surface: requestId uniqueness, all-or-nothing batch create, and the one-shot result
- * callback that fires when the TASK (not each execution) reaches a terminal state.
+ * Open API surface: requestId uniqueness, per-item partial success on batch create, and the
+ * one-shot result callback that fires when the TASK (not each execution) reaches a terminal state.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:atest-openapi;DB_CLOSE_DELAY=-1",
         "atest.agent.port=0",
-        // fast callback retries: waits are 5/10/20/40 ms instead of 1/2/4/8 s
+        // fast callback retries: waits are 5/10/20/40/80 ms instead of 1/2/4/8/16 s
         "atest.callback.backoff-base-ms=5",
         "atest.callback.timeout-ms=2000"
 })
@@ -155,21 +155,87 @@ class OpenApiCallbackTest {
     // ------------------------------------------------------------------ batch
 
     @Test
-    void batchWithUnknownTargetRejectsTheWholeRequest() {
+    void batchIsPartialSuccessPerItem() {
+        // one good item, one unknown target, one empty command -> only the bad two are rejected
+        Map<String, Object> result = taskService.createBatch(batch("req.batch-partial", null,
+                item("echo good", "open-agent-a"),
+                item("echo bad", "no-such-agent"),
+                item("", "open-agent-a")));
+
+        @SuppressWarnings("unchecked")
+        List<TaskView> tasks = (List<TaskView>) result.get("tasks");
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.get(0).command()).isEqualTo("echo good");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> errors = (List<Map<String, Object>>) result.get("errors");
+        assertThat(errors).hasSize(2);
+        assertThat(errors.get(0).get("index")).isEqualTo(1);
+        assertThat((String) errors.get(0).get("message")).contains("no-such-agent");
+        assertThat(errors.get(1).get("index")).isEqualTo(2);
+        assertThat((String) errors.get(1).get("message")).contains("command");
+
+        // the requestId is consumed by the successful item and finds exactly that task
+        assertThat(taskRepository.existsByRequestId("req.batch-partial")).isTrue();
+        @SuppressWarnings("unchecked")
+        List<TaskView> found = (List<TaskView>) taskService.listByRequestId("req.batch-partial", false).get("items");
+        assertThat(found).hasSize(1);
+    }
+
+    @Test
+    void batchItemWithAnyBadTargetIsRejectedWhole() {
+        // items[1] mixes a good and an unknown target: the whole ITEM dies, never a subset task
+        Map<String, Object> result = taskService.createBatch(batch("req.batch-mixed-targets", null,
+                item("echo solo", "open-agent-a"),
+                item("echo mixed", "open-agent-b", "ghost-agent")));
+
+        @SuppressWarnings("unchecked")
+        List<TaskView> tasks = (List<TaskView>) result.get("tasks");
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.get(0).targets()).containsExactly("open-agent-a");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> errors = (List<Map<String, Object>>) result.get("errors");
+        assertThat(errors).hasSize(1);
+        assertThat(errors.get(0).get("index")).isEqualTo(1);
+        assertThat((String) errors.get(0).get("message")).contains("ghost-agent");
+
+        // no task was created for the mixed item, not even for its valid target
+        @SuppressWarnings("unchecked")
+        List<TaskView> found = (List<TaskView>) taskService
+                .listByRequestId("req.batch-mixed-targets", false).get("items");
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).command()).isEqualTo("echo solo");
+    }
+
+    @Test
+    void batchWithZeroValidItemsDoesNotConsumeTheRequestId() {
         long before = taskRepository.count();
 
-        BatchCreateTaskRequest batch = batch("req.batch-bad", null,
-                item("echo good", "open-agent-a"),
+        BatchCreateTaskRequest allBad = batch("req.batch-allbad", null,
+                item("", "open-agent-a"),
                 item("echo bad", "no-such-agent"));
-        assertThatThrownBy(() -> taskService.createBatch(batch))
+        assertThatThrownBy(() -> taskService.createBatch(allBad))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(e.getMessage()).contains("items[1]").contains("no-such-agent");
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> errors = (List<Map<String, Object>>) e.getExtra().get("errors");
+                    assertThat(errors).hasSize(2);
+                    assertThat(errors.get(0).get("index")).isEqualTo(0);
+                    assertThat(errors.get(1).get("index")).isEqualTo(1);
                 });
 
-        // no partial create: nothing under the requestId, no extra tasks at all
+        // nothing persisted, the key stays free…
         assertThat(taskRepository.count()).isEqualTo(before);
-        assertThat(taskRepository.existsByRequestId("req.batch-bad")).isFalse();
+        assertThat(taskRepository.existsByRequestId("req.batch-allbad")).isFalse();
+
+        // …so the caller can fix the payload and retry with the SAME requestId
+        Map<String, Object> retry = taskService.createBatch(batch("req.batch-allbad", null,
+                item("echo fixed", "open-agent-a")));
+        @SuppressWarnings("unchecked")
+        List<TaskView> tasks = (List<TaskView>) retry.get("tasks");
+        assertThat(tasks).hasSize(1);
+        assertThat(taskRepository.existsByRequestId("req.batch-allbad")).isTrue();
     }
 
     @Test
@@ -227,11 +293,13 @@ class OpenApiCallbackTest {
         assertThat(reloaded.getCallbackLastError()).isNull();
         assertThat(reloaded.getCallbackLastAt()).isNotNull();
 
-        // payload carries the useful result fields, never the raw logs
+        // payload carries the full task fields and per-execution results, never the raw logs
         JsonNode payload = Json.read(lastOkBody.get());
         assertThat(payload.get("taskId").asLong()).isEqualTo(task.id());
         assertThat(payload.get("requestId").asText()).isEqualTo("req.cb-once");
         assertThat(payload.get("status").asText()).isEqualTo("finished");
+        assertThat(payload.get("command").asText()).isEqualTo("echo both");
+        assertThat(payload.get("targets")).hasSize(2);
         assertThat(payload.get("executions")).hasSize(2);
         JsonNode first = payload.get("executions").get(0);
         assertThat(first.get("executeId").asText()).isNotBlank();
@@ -240,7 +308,7 @@ class OpenApiCallbackTest {
     }
 
     @Test
-    void callbackRetriesAndIsMarkedFailedAfterFiveAttempts() {
+    void callbackRetriesFiveTimesThenIsMarkedFailed() {
         failHits.set(0);
         TaskView task = taskService.create(request("req.cb-fail", callbackUrl("/fail"),
                 "echo fail", "open-agent-a"));
@@ -252,10 +320,11 @@ class OpenApiCallbackTest {
             assertThat(reloaded.getCallbackStatus()).isEqualTo(CallbackStatus.FAILED);
         });
 
+        // 1 initial send + 5 backoff retries (1s/2s/4s/8s/16s in production) = 6 attempts total
         TaskEntity reloaded = taskRepository.findById(task.id()).orElseThrow();
-        assertThat(reloaded.getCallbackAttempts()).isEqualTo(5);
+        assertThat(reloaded.getCallbackAttempts()).isEqualTo(6);
         assertThat(reloaded.getCallbackLastError()).contains("HTTP 500");
-        assertThat(failHits.get()).isEqualTo(5);
+        assertThat(failHits.get()).isEqualTo(6);
 
         // callback retry never re-runs the shell: the execution result is untouched
         TaskExecutionEntity execReloaded = executionRepository.findById(exec.getId()).orElseThrow();

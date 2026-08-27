@@ -216,6 +216,13 @@ public class CallbackService {
         payload.put("requestId", task.getRequestId());
         payload.put("name", task.getName());
         payload.put("status", task.getStatus().wire());
+        payload.put("command", task.getCommand());
+        payload.put("cwd", task.getCwd());
+        payload.put("env", Json.read(task.getEnv()));
+        payload.put("conditionConfig", Json.read(task.getConditionConfig()));
+        payload.put("targets", Json.read(task.getTargets()));
+        payload.put("timeoutSec", task.getTimeoutSec());
+        payload.put("priority", task.getPriority());
         payload.put("operator", task.getOperator());
         payload.put("totalCount", task.getTotalCount());
         payload.put("statusCounts", counts);

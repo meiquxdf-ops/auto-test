@@ -96,10 +96,10 @@ atest:
     heartbeat-ms: 15000
     emitter-timeout-ms: 0
   # 任务终态回调（开放 API）：任务 finished/canceled 后向 callbackUrl POST 一次结果，
-  # 2xx 算成功；失败按 1s/2s/4s/8s 退避重试，共 max-attempts 次后置 failed。
+  # 2xx 算成功；失败按 1s/2s/4s/8s/16s 退避重试 5 次（连首发共 max-attempts 次）后置 failed。
   # 注意这只重试 HTTP 通知本身，绝不会重跑 shell 命令。
   callback:
-    max-attempts: 5
+    max-attempts: 6
     backoff-base-ms: 1000
     timeout-ms: 10000
     sweep-interval-ms: 30000

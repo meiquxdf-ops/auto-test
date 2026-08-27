@@ -93,8 +93,11 @@ public class TaskService {
 
     /**
      * Open-API batch: one HTTP request creating several tasks (different commands / targets)
-     * grouped by one requestId. Validation of every item happens before the first insert, so an
-     * invalid item (e.g. unknown target) rejects the whole request without partial creates.
+     * grouped by one requestId. Partial success per item: an invalid item (empty command, unknown
+     * target, bad fields) only rejects that item and lands in {@code errors[{index,message}]},
+     * the valid items are still created. A missing / malformed / duplicate requestId rejects the
+     * whole call before any item is looked at. When EVERY item fails, nothing is persisted and the
+     * requestId stays free, so the caller can fix the payload and retry with the same key.
      */
     @Transactional
     public Map<String, Object> createBatch(BatchCreateTaskRequest request) {
@@ -108,14 +111,29 @@ public class TaskService {
             throw ApiException.badRequest("items 最多 " + BATCH_MAX_ITEMS + " 条，实际 " + items.size() + " 条");
         }
         List<PreparedTask> prepared = new ArrayList<>(items.size());
+        List<Map<String, Object>> errors = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             BatchCreateTaskRequest.Item item = items.get(i);
-            if (item == null) {
-                throw ApiException.badRequest("items[" + i + "] 不能为空");
+            try {
+                if (item == null) {
+                    throw ApiException.badRequest("item 不能为空");
+                }
+                // an item with any bad target is rejected whole: never a task with a subset of targets
+                prepared.add(prepareTask(item.getName(), item.getCommand(), item.getCwd(), item.getEnv(),
+                        item.getTargets(), item.getConditionConfig(), item.getOperator(), item.getTimeoutSec(),
+                        null, null));
+            } catch (ApiException e) {
+                Map<String, Object> error = new LinkedHashMap<>();
+                error.put("index", i);
+                error.put("message", e.getMessage());
+                errors.add(error);
             }
-            prepared.add(prepareTask(item.getName(), item.getCommand(), item.getCwd(), item.getEnv(),
-                    item.getTargets(), item.getConditionConfig(), item.getOperator(), item.getTimeoutSec(),
-                    null, "items[" + i + "] "));
+        }
+        if (prepared.isEmpty()) {
+            // zero successes: don't consume the requestId, otherwise its query stays empty forever
+            throw ApiException.badRequest("items 全部校验失败，requestId 未占用，可修正后原样重试")
+                    .withExtra("requestId", requestId)
+                    .withExtra("errors", errors);
         }
         Instant now = Instant.now();
         List<TaskView> tasks = new ArrayList<>(prepared.size());
@@ -125,6 +143,7 @@ public class TaskService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("requestId", requestId);
         result.put("tasks", tasks);
+        result.put("errors", errors);
         return result;
     }
 
