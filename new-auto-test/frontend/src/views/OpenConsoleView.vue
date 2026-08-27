@@ -1328,6 +1328,15 @@ async function copySnippet() {
   padding: 5px 6px;
 }
 
+.acts :deep(.el-button.is-text),
+.acts :deep(.el-button.is-link) {
+  color: #2ee9d0;
+}
+
+.acts :deep(.el-button.is-text.el-button--danger) {
+  color: #f87171;
+}
+
 /* ------------------------------------------------------------ 展开面板 */
 
 :deep(.el-table__expanded-cell) {

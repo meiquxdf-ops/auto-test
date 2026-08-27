@@ -564,6 +564,7 @@ html.nat-open .el-message {
   --el-message-text-color: #e8eef8;
 }
 
-html.nat-open .el-button--primary {
+/* 只压实心主按钮字色；文字按钮 / 链接按钮必须保持青色，否则暗表「操作」列会看不见 */
+html.nat-open .el-button--primary:not(.is-text):not(.is-link):not(.is-plain) {
   --el-button-text-color: #051019;
 }
