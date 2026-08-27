@@ -9,6 +9,7 @@ import type { Agent, AgentStatus, TimelineEvent } from '@/api/types'
 import { useAgents } from '@/stores/agents'
 import { formatFullTime, fromNow, shortId } from '@/utils/format'
 import { AGENT_STATUS_META } from '@/utils/status'
+import AgentInstallDrawer from '@/components/AgentInstallDrawer.vue'
 import AgentStatusLight from '@/components/AgentStatusLight.vue'
 import CopyableId from '@/components/CopyableId.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -20,6 +21,7 @@ const { agents, loading, error, refresh, sseState } = useAgents()
 
 const keyword = ref('')
 const statusFilter = ref<AgentStatus | 'all'>('all')
+const installVisible = ref(false)
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -260,6 +262,7 @@ function rowClass({ row }: { row: Agent }) {
       </div>
       <div class="page-head__actions">
         <el-button :icon="'Refresh'" :loading="loading" @click="refresh">刷新</el-button>
+        <el-button type="primary" :icon="'Plus'" @click="installVisible = true">安装 Agent</el-button>
       </div>
     </div>
 
@@ -430,6 +433,7 @@ function rowClass({ row }: { row: Agent }) {
         title="还没有机器接入"
         desc="Agent 安装后会自动向 Server 注册（TCP :9800），注册成功即出现在这里"
       >
+        <el-button size="small" type="primary" :icon="'Plus'" @click="installVisible = true">安装 Agent</el-button>
         <el-button size="small" :icon="'Refresh'" @click="refresh">重新加载</el-button>
       </EmptyState>
     </div>
@@ -462,6 +466,9 @@ function rowClass({ row }: { row: Agent }) {
         <el-button type="primary" :loading="editSaving" :disabled="!!tagError" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 安装 Agent（只生成 install.sh 命令，安装动作在目标机上完成） -->
+    <AgentInstallDrawer v-model="installVisible" :agents="agents" @refresh="refresh" />
 
     <!-- 机器时间线 -->
     <el-drawer v-model="drawerVisible" size="720px" :with-header="false">
