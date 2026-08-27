@@ -106,7 +106,7 @@ env:                    # 注入到每次执行的公共环境变量
 ├── evt-seq            # 事件号水位，保证 evtId 跨重启不重复
 ├── atagent.sock       # 状态查询 unix socket
 ├── status.json        # 状态快照文件（socket 不可用时的兜底）
-├── journal/           # 每个 execution 的日志尾部
+├── journal/           # 每个 execution 的日志尾部；在跑执行另有 <executeId>.pgid 记录进程组号
 └── spool/fin/         # 尚未被 Server 确认的 fin 帧
 ```
 
@@ -165,7 +165,8 @@ ControlResult（`hello` / `hb` 的响应，所有字段可选，回 `{}` 也合�
 ## 执行语义
 
 - **先 ACK 再执行**：`exec` 的响应只代表“已受理并占住槽位”，进程在响应帧写出之后才启动。执行结果一律由 `fin` 决定，ACK 不代表任何终态。
-- **并发**：同一时刻运行的执行数不超过配置的 `concurrency`（默认 1，上限 4）。超出时用 `busy` 拒绝；`dispatchToken` 或 `executeId` 重复用 `dup_token` 拒绝。改并发只在本机空闲时生效。
+- **exec 串行受理**：同一条会话上的 `exec` 按到达顺序（FIFO）逐个受理，后到的下发不会抢先占槽把队头挤成 `busy`；`cancel` / `stop` / `ping` 仍然并发处理，不受排队影响。
+- **并发**：同一时刻运行的执行数不超过配置的 `concurrency`（默认 1，上限 4）。超出时用 `busy` 拒绝；`dispatchToken` 或 `executeId` 重复用 `dup_token` 拒绝。改并发只在本机空闲时生效。`hello` 里携带的 `concurrency` 仅在该 agentId 首次注册时被 Server 采纳，重连时以 Server 端存量值为准（由响应下发）。
 - **进程组**：命令通过 `bash -c <command>` 启动，并 `Setpgid` 单独成组。取消、超时、停机都是对整个进程组发信号，所以 `cmd &` 起的后台子进程不会变成孤儿。
 - **取消**：`cancel` 按 `dispatchToken` 找到执行，先给进程组 `SIGTERM`，`killGraceSec` 秒后仍未退出则 `SIGKILL`。`stop` 是对本机所有执行做同样的事。
 - **超时**：`timeoutSec > 0` 时到点按取消流程处理，`fin.reason=timeout`。
@@ -181,6 +182,7 @@ ControlResult（`hello` / `hb` 的响应，所有字段可选，回 `{}` 也合�
 - **断线重连**：连接断开后按指数退避加随机抖动重连（默认 500ms 起、30s 封顶），连续稳定 60 秒以上的连接会重置退避。1000 台机器同时重连时抖动能避免踩踏。
 - **重连对账**：`hello` 会带上本机正在跑的执行（含 pid、日志水位）。**短暂断线不会杀进程**：本地进程照常跑、日志照常写 journal，重连后补发。只有 Server 在 `hello` / `hb` 响应里明确用 `cancel` 点名的 token 才会被结束。
 - **停机**：收到 `SIGTERM`/`SIGINT` 后停止接单，默认结束正在跑的执行（`killOnShutdown: false` 可改成留着不管），随后用还活着的连接把剩余日志与 fin 发完再退出。再按一次 Ctrl-C 立即退出。
+- **崩溃残留回收**：命令启动时把进程组号写入 `journal/<executeId>.pgid`，执行结束即删除。Agent 被 `SIGKILL` 时来不及做任何清理，残留的进程组会在下次启动、开始接单之前按残留的 `.pgid` 统一收掉（先 `SIGTERM`，宽限期后 `SIGKILL`），不会留下 Server 已判异常（已无该进程）却还在跑的孤儿进程。
 
 ## 状态查询
 

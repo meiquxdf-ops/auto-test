@@ -149,7 +149,7 @@ public class AgentSessionService {
             agent = new AgentEntity();
             agent.setAgentId(agentId);
             agent.setDisplayTag(resolveNewTag(agentId, requestedTag));
-            agent.setConcurrency(props.getConcurrency().getDefaultValue());
+            agent.setConcurrency(firstHelloConcurrency(a));
             agent.setCreatedAt(now);
         } else if (requestedTag != null && !requestedTag.isBlank()
                 && !requestedTag.equals(agent.getDisplayTag())) {
@@ -194,6 +194,20 @@ public class AgentSessionService {
         result.put("lastEvtId", agentEventRepository.maxEvtId(agentId));
         result.put("heartbeatSec", Math.max(5, props.getDispatch().getLeaseSec() / 3));
         return result;
+    }
+
+    /**
+     * hello carries the concurrency the operator configured on the agent (`-concurrency N`).
+     * It is honored only when the agentId enrolls for the first time; on reconnect the stored
+     * value stays authoritative (changes go through PATCH while idle) and the hello reply
+     * pushes it back to the agent.
+     */
+    private int firstHelloConcurrency(JsonNode a) {
+        JsonNode v = Json.first(a, "concurrency", "conc");
+        if (v == null || !v.isNumber() || v.asInt() < 1) {
+            return props.getConcurrency().getDefaultValue();
+        }
+        return Math.min(v.asInt(), props.getConcurrency().getMaxValue());
     }
 
     private String resolveNewTag(String agentId, String requestedTag) {

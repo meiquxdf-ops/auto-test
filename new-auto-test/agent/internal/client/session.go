@@ -64,6 +64,13 @@ type Session struct {
 	pendingMu sync.Mutex
 	pending   map[int64]chan *proto.Envelope
 
+	// Exec requests are serviced strictly in arrival order by one worker
+	// goroutine; see enqueueExec for why.
+	execMu    sync.Mutex
+	execQueue []*proto.Envelope
+	execKick  chan struct{}
+	execOnce  sync.Once
+
 	closeOnce sync.Once
 	closed    chan struct{}
 	errMu     sync.Mutex
@@ -92,6 +99,7 @@ func NewSession(conn net.Conn, handler Handler, opt SessionOptions) *Session {
 		opt:      opt,
 		handler:  handler,
 		pending:  map[int64]chan *proto.Envelope{},
+		execKick: make(chan struct{}, 1),
 		closed:   make(chan struct{}),
 		OpenedAt: time.Now(),
 	}
@@ -124,7 +132,12 @@ func (s *Session) Serve() {
 		case proto.KindRsp:
 			s.deliver(env)
 		case proto.KindReq:
-			go s.dispatch(env)
+			if env.M == proto.MExec {
+				// Exec is order sensitive: handle it on the serial worker.
+				s.enqueueExec(env)
+			} else {
+				go s.dispatch(env)
+			}
 		default:
 			s.opt.Logf("ignoring frame with unknown type %q", env.T)
 		}
@@ -143,7 +156,74 @@ func (s *Session) deliver(env *proto.Envelope) {
 	ch <- env
 }
 
+// enqueueExec queues an exec request for the single per-session worker and
+// wakes it. Exec frames must be handled strictly in arrival order: the server
+// dispatches queued executions oldest first, and handling them concurrently
+// lets a later dispatch win the race for the last free slot so the queue head
+// gets busy-rejected and runs after work that was enqueued behind it. Only the
+// append happens here, so the read loop is never held up; cancel, stop and
+// ping keep their own goroutines and can overtake a slow exec.
+func (s *Session) enqueueExec(env *proto.Envelope) {
+	s.execMu.Lock()
+	s.execQueue = append(s.execQueue, env)
+	s.execMu.Unlock()
+	s.execOnce.Do(func() { go s.execLoop() })
+	select {
+	case s.execKick <- struct{}{}:
+	default:
+	}
+}
+
+// execLoop drains the exec queue one request at a time, so ACK/busy decisions
+// are made in exactly the order the server sent the frames. Queued requests
+// still pending when the session dies are dropped: their responses could
+// never be written, and the server retries on the next session.
+func (s *Session) execLoop() {
+	for {
+		s.execMu.Lock()
+		var env *proto.Envelope
+		if len(s.execQueue) > 0 {
+			env = s.execQueue[0]
+			s.execQueue = s.execQueue[1:]
+		}
+		s.execMu.Unlock()
+		if env == nil {
+			select {
+			case <-s.execKick:
+				continue
+			case <-s.closed:
+				return
+			}
+		}
+		select {
+		case <-s.closed:
+			return
+		default:
+		}
+		after, ok := s.respond(env)
+		if !ok {
+			return
+		}
+		if after != nil {
+			// The process start happens off the worker so a slow spawn cannot
+			// delay the ACK of the next queued exec. The slot was already
+			// reserved by the handler, so ordering is unaffected.
+			go after()
+		}
+	}
+}
+
 func (s *Session) dispatch(env *proto.Envelope) {
+	after, ok := s.respond(env)
+	if ok && after != nil {
+		after()
+	}
+}
+
+// respond runs the handler and writes the response frame. It returns the
+// After hook (nil when the handler set none) and whether the write succeeded;
+// on a failed write the session is already closed.
+func (s *Session) respond(env *proto.Envelope) (func(), bool) {
 	var resp Response
 	if s.handler == nil {
 		resp = Fail(proto.CodeUnsupported, "no handler for %q", env.M)
@@ -164,11 +244,9 @@ func (s *Session) dispatch(env *proto.Envelope) {
 	}
 	if err := s.write(out); err != nil {
 		s.Close(err)
-		return
+		return nil, false
 	}
-	if resp.After != nil {
-		resp.After()
-	}
+	return resp.After, true
 }
 
 // Call sends a request and waits for its response. A protocol level failure is

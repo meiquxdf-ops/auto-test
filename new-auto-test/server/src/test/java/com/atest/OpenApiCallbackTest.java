@@ -177,6 +177,9 @@ class OpenApiCallbackTest {
         assertThat(second.requestId()).isNotEqualTo(task.requestId());
 
         // rerun-as-new is a fresh create call, so it mints a fresh key too
+        // (rerun of any kind requires the selected executions to be terminal first)
+        TaskExecutionEntity exec = executionRepository.findByTaskIdOrderByIdAsc(task.id()).get(0);
+        executionService.finish(exec, ExecutionStatus.PASS, "junit", null);
         TaskView rerun = taskService.rerun(task.id(), null);
         assertThat(rerun.requestId()).matches(TaskService.REQUEST_ID_PATTERN);
         assertThat(rerun.requestId()).isNotEqualTo(task.requestId());

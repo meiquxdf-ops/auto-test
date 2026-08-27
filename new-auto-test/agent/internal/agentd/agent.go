@@ -109,6 +109,13 @@ func New(cfg *config.Config, log *logx.Logger) (*Agent, error) {
 	if n := finSpool.Len(); n > 0 {
 		log.Warnf("%d fin frame(s) from a previous run are waiting for delivery", n)
 	}
+	// A SIGKILL'ed agent leaves its executions' process groups running; reap
+	// them from the pgid sidecars before accepting any new work.
+	if n, err := journal.KillLeftoverGroups(journal.Dir(cfg.DataDir), time.Duration(cfg.KillGraceSec)*time.Second); err != nil {
+		log.Warnf("reap leftover process groups: %v", err)
+	} else if n > 0 {
+		log.Warnf("killed %d process group(s) left over from a previous run", n)
+	}
 	if n, err := journal.Cleanup(journal.Dir(cfg.DataDir), finSpool.IDs()); err != nil {
 		log.Warnf("clean up old journals: %v", err)
 	} else if n > 0 {

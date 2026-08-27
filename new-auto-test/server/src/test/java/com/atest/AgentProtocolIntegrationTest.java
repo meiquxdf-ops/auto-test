@@ -174,6 +174,45 @@ class AgentProtocolIntegrationTest {
         }
     }
 
+    /**
+     * `atagent -concurrency N` reaches the server inside the first hello. The server honors it
+     * only when the agentId enrolls for the first time; on reconnect the stored value stays
+     * authoritative (changes go through PATCH while idle) and the hello reply pushes it back.
+     */
+    @Test
+    void firstHelloRegistersRequestedConcurrency() throws Exception {
+        try (TestAgent agent = new TestAgent(tcpServer.boundPort())) {
+            Envelope hello = agent.hello("agent-first-conc", List.of(), 2);
+            assertThat(hello.isOk()).isTrue();
+            assertThat(hello.result().get("concurrency").asInt()).isEqualTo(2);
+        }
+        assertThat(agentRepository.findById("agent-first-conc").orElseThrow().getConcurrency())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void reconnectHelloDoesNotOverrideStoredConcurrency() throws Exception {
+        try (TestAgent agent = new TestAgent(tcpServer.boundPort())) {
+            // first enroll without a concurrency wish -> server default (1)
+            Envelope hello = agent.hello("agent-keep-conc", List.of());
+            assertThat(hello.isOk()).isTrue();
+            assertThat(hello.result().get("concurrency").asInt()).isEqualTo(1);
+        }
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(agentRepository.findById("agent-keep-conc").orElseThrow().getStatus())
+                        .isEqualTo(AgentStatus.OFFLINE));
+
+        try (TestAgent again = new TestAgent(tcpServer.boundPort())) {
+            Envelope hello = again.hello("agent-keep-conc", List.of(), 4);
+            assertThat(hello.isOk()).isTrue();
+            assertThat(hello.result().get("concurrency").asInt())
+                    .as("reconnect hello must not override the stored concurrency")
+                    .isEqualTo(1);
+        }
+        assertThat(agentRepository.findById("agent-keep-conc").orElseThrow().getConcurrency())
+                .isEqualTo(1);
+    }
+
     private ExecutionStatus statusOf(String executeId) {
         return executionRepository.findByExecuteId(executeId).orElseThrow().getStatus();
     }
@@ -231,6 +270,17 @@ class AgentProtocolIntegrationTest {
                     "bootId", "boot-1",
                     "ver", "test-1.0",
                     "aliases", List.of(),
+                    "running", running));
+        }
+
+        Envelope hello(String agentId, List<Map<String, Object>> running, int concurrency)
+                throws IOException {
+            return request("hello", Map.of(
+                    "agentId", agentId,
+                    "bootId", "boot-1",
+                    "ver", "test-1.0",
+                    "aliases", List.of(),
+                    "concurrency", concurrency,
                     "running", running));
         }
 

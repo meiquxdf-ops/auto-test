@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/atest/atagent/internal/journal"
 	"github.com/atest/atagent/internal/proto"
 )
 
@@ -248,6 +250,41 @@ func TestReapRemovesJournal(t *testing.T) {
 	}
 	if m.ByToken("t-reap", "e-reap") != nil {
 		t.Error("a reaped execution should no longer be tracked")
+	}
+}
+
+// The pgid sidecar is what lets the next agent start reap groups that
+// survived a SIGKILL of the agent itself: it must exist exactly while the
+// process group does.
+func TestPGIDSidecarFollowsExecutionLifetime(t *testing.T) {
+	m, done := newTestManager(t, 1)
+	e := run(t, m, Spec{ExecuteID: "e-pgid", Token: "t-pgid", Command: "sleep 30"})
+
+	path := journal.PGIDPath(m.opt.JournalDir, "e-pgid")
+	deadline := time.Now().Add(10 * time.Second)
+	var raw []byte
+	for time.Now().Before(deadline) {
+		var err error
+		if raw, err = os.ReadFile(path); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if raw == nil {
+		t.Fatal("the pgid sidecar was never written")
+	}
+	got, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("sidecar content %q is not a pid: %v", raw, err)
+	}
+	if got != e.PID() {
+		t.Errorf("sidecar pgid = %d, want %d", got, e.PID())
+	}
+
+	m.StopAll(proto.ReasonStopped)
+	waitFin(t, done, 10*time.Second)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the sidecar should be removed once the execution finished: %v", err)
 	}
 }
 

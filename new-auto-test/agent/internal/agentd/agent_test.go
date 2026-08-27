@@ -4,12 +4,14 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/atest/atagent/internal/config"
+	"github.com/atest/atagent/internal/journal"
 	"github.com/atest/atagent/internal/logx"
 	"github.com/atest/atagent/internal/proto"
 )
@@ -516,6 +518,39 @@ func TestChattyExecutionIsTruncatedAndFlagged(t *testing.T) {
 	}
 	if gaps > 0 {
 		t.Logf("uploader fell behind the %d byte cap: %d gap(s) reported to the server", 64<<10, gaps)
+	}
+}
+
+// A SIGKILL'ed agent leaves its executions' process groups running and the
+// server reconciles those tasks to an exception; the next start must reap the
+// leftover groups from the pgid sidecars before accepting work.
+func TestStartupReapsProcessGroupsLeftBySIGKILL(t *testing.T) {
+	srv := newFakeServer(t)
+
+	// Stand-in for a process group orphaned by a SIGKILL of the previous
+	// agent: a sleep in its own group, referenced only by a pgid sidecar.
+	sleeper := exec.Command("sleep", "60")
+	sleeper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := sleeper.Start(); err != nil {
+		t.Fatalf("start sleeper: %v", err)
+	}
+	pgid := sleeper.Process.Pid
+	go sleeper.Wait() // reap promptly so the group truly disappears
+	defer syscall.Kill(-pgid, syscall.SIGKILL)
+
+	var journalDir string
+	startAgent(t, srv, func(c *config.Config) {
+		journalDir = journal.Dir(c.DataDir)
+		if err := journal.WritePGID(journalDir, "e-crashed", pgid); err != nil {
+			t.Fatalf("write pgid sidecar: %v", err)
+		}
+	})
+
+	waitFor(t, 10*time.Second, "the leftover process group to be reaped", func() bool {
+		return syscall.Kill(-pgid, 0) == syscall.ESRCH
+	})
+	if _, err := os.Stat(journal.PGIDPath(journalDir, "e-crashed")); !os.IsNotExist(err) {
+		t.Errorf("the sidecar should be removed after the reap: %v", err)
 	}
 }
 

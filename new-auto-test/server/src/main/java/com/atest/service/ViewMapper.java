@@ -71,7 +71,9 @@ public class ViewMapper {
                 aliases,
                 agent.getConcurrency(),
                 props.getConcurrency().getMaxValue(),
-                agent.getRunningCount(),
+                // the heartbeat-reported running_count lags the store and used to contradict idle
+                // (runningCount=0 while idle=false); kept for API compat but fed the live count
+                activeCount,
                 activeCount,
                 activeCount == 0,
                 agent.getConnectedAt(),

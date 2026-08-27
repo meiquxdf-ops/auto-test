@@ -38,7 +38,7 @@
 
 | 方向 | m | 语义 |
 |---|---|---|
-| A→S | hello | 注册：agentId, bootId, ver, aliases, running, lastEvtId, lastLog |
+| A→S | hello | 注册：agentId, bootId, ver, aliases, concurrency, running, lastEvtId, lastLog；concurrency 仅在该 agentId 首次注册时生效，重连以 Server 存量值为准 |
 | A→S | hb | 心跳 + running；Server 续租约 |
 | A→S | log | executeId, token, fromSeq, lines[] |
 | A→S | evt | 事件批量，(agentId,evtId) 幂等 |

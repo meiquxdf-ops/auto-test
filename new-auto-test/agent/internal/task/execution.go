@@ -128,6 +128,13 @@ func (e *Execution) run() {
 	pending := e.killReason
 	e.mu.Unlock()
 
+	// A SIGKILL of the agent runs no shutdown hook, so the group id is
+	// persisted now; the next start reaps any group whose sidecar is still
+	// there. With Setpgid the group id is the child's pid.
+	if err := journal.WritePGID(m.opt.JournalDir, spec.ExecuteID, cmd.Process.Pid); err != nil {
+		e.journal.Note("[atagent] persist pgid: %v", err)
+	}
+
 	m.opt.OnEvent(events.KindExecStart, spec.ExecuteID, spec.Token,
 		"started pid "+itoa(cmd.Process.Pid), map[string]string{
 			"pid":     itoa(cmd.Process.Pid),
@@ -300,6 +307,7 @@ func (e *Execution) finish(code int, signal, reason, errMsg string) {
 
 	close(e.done)
 	_ = e.journal.Sync()
+	_ = journal.RemovePGID(e.mgr.opt.JournalDir, e.spec.ExecuteID)
 
 	e.mgr.opt.OnEvent(events.KindExecExit, e.spec.ExecuteID, e.spec.Token,
 		"exit "+itoa(code)+" ("+reason+")", map[string]string{

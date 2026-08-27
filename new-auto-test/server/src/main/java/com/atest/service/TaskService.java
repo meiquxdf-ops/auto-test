@@ -494,6 +494,14 @@ public class TaskService {
         if (selected.isEmpty()) {
             throw ApiException.badRequest("没有可重跑的执行");
         }
+        // both modes: rerunning while a selected execution is still live is rejected, never
+        // silently cloned alongside it — 同一份执行不允许边跑边重跑
+        for (TaskExecutionEntity exec : selected) {
+            if (!exec.getStatus().isTerminal()) {
+                throw ApiException.conflict("执行 " + exec.getExecuteId() + " 仍在进行（"
+                        + exec.getStatus().wire() + "），请等待其结束后再重跑");
+            }
+        }
         if ("inplace".equals(mode)) {
             return rerunInPlace(task, selected);
         }
@@ -501,11 +509,6 @@ public class TaskService {
     }
 
     private TaskView rerunInPlace(TaskEntity task, List<TaskExecutionEntity> selected) {
-        for (TaskExecutionEntity exec : selected) {
-            if (!exec.getStatus().isTerminal()) {
-                throw ApiException.conflict("执行 " + exec.getExecuteId() + " 仍在进行，无法原地重跑");
-            }
-        }
         Instant now = Instant.now();
         for (TaskExecutionEntity exec : selected) {
             logRepository.deleteByExecuteId(exec.getExecuteId());
