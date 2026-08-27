@@ -1,0 +1,394 @@
+#!/usr/bin/env bash
+#
+# new-auto-test Agent 安装脚本（需要 root）
+#
+#   ./install.sh --server 10.0.0.5:9800 --tag qa-node-01
+#   ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 --bin /tmp/atagent
+#   ./install.sh --uninstall
+#
+# 详见同目录 README.md。
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+SERVICE_NAME="atagent"
+CONF_DIR="/etc/atagent"
+CONF_FILE="${CONF_DIR}/config.yaml"
+INSTALL_BIN="/usr/local/bin/atagent"
+UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+DEFAULT_DATA_DIR="/var/lib/atagent"
+DEFAULT_LOG_DIR="/var/log/atagent"
+
+SERVER=""
+TAG=""
+DATA_DIR=""
+LOG_DIR=""
+BIN_SRC=""
+BIN_URL=""
+BIN_SHA256=""
+CONCURRENCY=""
+NEW_AGENT_ID=0
+DO_ENABLE=1
+DO_UNINSTALL=0
+DO_PURGE=0
+
+log()  { printf '[atagent] %s\n' "$*"; }
+warn() { printf '[atagent] 警告: %s\n' "$*" >&2; }
+die()  { printf '[atagent] 错误: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    cat <<'EOF'
+用法: install.sh [选项]
+
+  --server HOST:PORT   Server 的 Agent TCP 地址，例如 10.0.0.5:9800（首次安装必填）
+  --tag NAME           本机显示名，全局唯一；默认取 hostname
+  --data-dir DIR       数据目录，默认 /var/lib/atagent（agent-id、执行工作区）
+  --log-dir DIR        Agent 自身日志目录，默认 /var/log/atagent
+  --bin PATH           使用本地二进制（默认自动在脚本同级、当前目录、../agent/ 下找 atagent）
+  --url URL            从内网 URL 下载二进制（与 --bin 二选一）
+  --sha256 HEX         配合 --url 校验下载结果
+  --concurrency N      本机最大并发任务数 1-4，默认 1
+  --new-agent-id       重新生成 agent-id（默认保留旧的，机器身份不变）
+  --no-enable          只落盘文件，不 enable/start（做基础镜像时用）
+  --uninstall          停止并卸载服务
+  --purge              配合 --uninstall，连配置和数据目录一起删
+  -h, --help           显示本帮助
+
+例子:
+  sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01
+  sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 --bin ./atagent --concurrency 2
+  sudo ./install.sh --bin ./atagent            # 升级，沿用已有配置
+  sudo ./install.sh --uninstall --purge
+EOF
+}
+
+# ---------------------------------------------------------------- 参数解析
+
+need_value() {
+    [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 需要一个参数值"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --server)       need_value "$@"; SERVER="$2"; shift 2 ;;
+        --tag)          need_value "$@"; TAG="$2"; shift 2 ;;
+        --data-dir)     need_value "$@"; DATA_DIR="$2"; shift 2 ;;
+        --log-dir)      need_value "$@"; LOG_DIR="$2"; shift 2 ;;
+        --bin)          need_value "$@"; BIN_SRC="$2"; shift 2 ;;
+        --url)          need_value "$@"; BIN_URL="$2"; shift 2 ;;
+        --sha256)       need_value "$@"; BIN_SHA256="$2"; shift 2 ;;
+        --concurrency)  need_value "$@"; CONCURRENCY="$2"; shift 2 ;;
+        --new-agent-id) NEW_AGENT_ID=1; shift ;;
+        --no-enable)    DO_ENABLE=0; shift ;;
+        --uninstall)    DO_UNINSTALL=1; shift ;;
+        --purge)        DO_PURGE=1; shift ;;
+        -h|--help)      usage; exit 0 ;;
+        *)              usage >&2; die "未知参数: $1" ;;
+    esac
+done
+
+[[ "$(id -u)" == "0" ]] || die "必须用 root 运行（sudo ./install.sh ...）"
+
+# ---------------------------------------------------------------- systemd helpers
+
+have_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
+
+systemd_or_skip() { have_systemd; }
+
+# 找还活着的 atagent 进程。只按进程名精确匹配，不能用 pgrep -f：
+# 本脚本自己的命令行里就带 atagent 路径（--bin），全命令行匹配会把 sudo/自己一起杀掉。
+find_agent_pids() {
+    local out
+    if command -v pgrep >/dev/null 2>&1; then
+        out="$(pgrep -x atagent 2>/dev/null || true)"
+    else
+        out="$(ps -eo pid=,comm= 2>/dev/null | awk '$2 == "atagent" {print $1}' || true)"
+    fi
+    local pid
+    for pid in $out; do
+        [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        printf '%s\n' "$pid"
+    done
+}
+
+# 停掉可能还在跑的旧 Agent：先 systemd，再兜底扫残留进程。
+stop_running_agent() {
+    if systemd_or_skip && systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+        log "停止旧服务 ${SERVICE_NAME}.service"
+        systemctl stop "${SERVICE_NAME}.service" || warn "systemctl stop 失败，继续用信号兜底"
+    fi
+
+    # 非 systemd 拉起来的（手工 nohup、旧版脚本）也要收掉，
+    # 否则新旧两个进程会用同一个 agentId 抢连接，触发 dup_session。
+    local pids
+    pids="$(find_agent_pids | tr '\n' ' ')"
+    [[ -n "${pids// /}" ]] || return 0
+
+    log "发现残留 atagent 进程: ${pids}发送 SIGTERM"
+    # shellcheck disable=SC2086
+    kill -TERM $pids 2>/dev/null || true
+
+    local i
+    for i in $(seq 1 20); do
+        pids="$(find_agent_pids | tr '\n' ' ')"
+        [[ -n "${pids// /}" ]] || return 0
+        sleep 0.5
+    done
+
+    warn "10s 内未退出，SIGKILL: ${pids}"
+    # shellcheck disable=SC2086
+    kill -KILL $pids 2>/dev/null || true
+    sleep 0.5
+}
+
+# ---------------------------------------------------------------- 卸载
+
+if [[ "$DO_UNINSTALL" == "1" ]]; then
+    if systemd_or_skip; then
+        systemctl disable --now "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    fi
+    stop_running_agent
+    rm -f "$UNIT_FILE"
+    if systemd_or_skip; then
+        systemctl daemon-reload || true
+        systemctl reset-failed "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    fi
+    rm -f "$INSTALL_BIN"
+    if [[ "$DO_PURGE" == "1" ]]; then
+        # data_dir / log_dir 可能被 --data-dir --log-dir 改过，按配置里的实际值删
+        purge_read() {
+            sed -n "s/^$1:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$CONF_FILE" 2>/dev/null | tail -1
+        }
+        purge_data="$(purge_read data_dir)"
+        purge_log="$(purge_read log_dir)"
+        rm -rf "$CONF_DIR" "${purge_data:-$DEFAULT_DATA_DIR}" "${purge_log:-$DEFAULT_LOG_DIR}"
+        log "已卸载并清除配置与数据"
+    else
+        log "已卸载（保留 ${CONF_DIR} 与数据目录，重装后 agent-id 不变）"
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------- 读取旧配置（升级场景可以不传参）
+
+conf_get() {
+    [[ -f "$CONF_FILE" ]] || return 0
+    sed -n "s/^$1:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$CONF_FILE" | tail -1
+}
+
+OLD_SERVER="$(conf_get server)"
+OLD_TAG="$(conf_get tag)"
+OLD_DATA_DIR="$(conf_get data_dir)"
+OLD_LOG_DIR="$(conf_get log_dir)"
+OLD_CONCURRENCY="$(conf_get concurrency)"
+
+SERVER="${SERVER:-$OLD_SERVER}"
+TAG="${TAG:-$OLD_TAG}"
+DATA_DIR="${DATA_DIR:-${OLD_DATA_DIR:-$DEFAULT_DATA_DIR}}"
+LOG_DIR="${LOG_DIR:-${OLD_LOG_DIR:-$DEFAULT_LOG_DIR}}"
+CONCURRENCY="${CONCURRENCY:-${OLD_CONCURRENCY:-1}}"
+TAG="${TAG:-$(hostname -s 2>/dev/null || hostname)}"
+
+# ---------------------------------------------------------------- 参数校验
+
+[[ -n "$SERVER" ]] || die "缺少 --server，格式 host:9800"
+[[ "$SERVER" =~ ^[A-Za-z0-9._-]+:[0-9]{1,5}$ ]] || die "--server 格式应为 host:port，当前: $SERVER"
+SERVER_PORT="${SERVER##*:}"
+(( 10#$SERVER_PORT >= 1 && 10#$SERVER_PORT <= 65535 )) || die "--server 端口非法: $SERVER_PORT"
+
+[[ "$TAG" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--tag 只允许字母数字和 . _ -，长度 1-64，当前: $TAG"
+# 协议规定 displayTag 全局唯一，重名会被 Server 拒绝
+[[ "$CONCURRENCY" =~ ^[1-4]$ ]] || die "--concurrency 只能是 1-4，当前: $CONCURRENCY"
+[[ "$DATA_DIR" == /* ]] || die "--data-dir 必须是绝对路径"
+[[ "$LOG_DIR" == /* ]] || die "--log-dir 必须是绝对路径"
+[[ -z "$BIN_SRC" || -z "$BIN_URL" ]] || die "--bin 与 --url 只能选一个"
+
+# ---------------------------------------------------------------- 取二进制
+
+TMP_DIR="$(mktemp -d /tmp/atagent-install.XXXXXX)"
+cleanup() { rm -rf "$TMP_DIR"; }
+trap cleanup EXIT
+
+STAGED_BIN=""
+
+if [[ -n "$BIN_URL" ]]; then
+    log "下载二进制: $BIN_URL"
+    STAGED_BIN="${TMP_DIR}/atagent"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 10 --retry 3 -o "$STAGED_BIN" "$BIN_URL" \
+            || die "下载失败: $BIN_URL"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=30 --tries=3 -O "$STAGED_BIN" "$BIN_URL" \
+            || die "下载失败: $BIN_URL"
+    else
+        die "机器上既没有 curl 也没有 wget，请改用 --bin 传本地二进制"
+    fi
+else
+    if [[ -z "$BIN_SRC" ]]; then
+        for cand in "${SCRIPT_DIR}/atagent" "./atagent" "${SCRIPT_DIR}/../agent/atagent"; do
+            if [[ -f "$cand" ]]; then BIN_SRC="$cand"; break; fi
+        done
+    fi
+    [[ -n "$BIN_SRC" ]] || die "找不到 atagent 二进制。用 --bin /path/to/atagent 指定，或把它放在脚本同目录"
+    [[ -f "$BIN_SRC" ]] || die "--bin 指向的文件不存在: $BIN_SRC"
+    STAGED_BIN="${TMP_DIR}/atagent"
+    cp -f "$BIN_SRC" "$STAGED_BIN" || die "复制二进制失败: $BIN_SRC"
+    log "使用本地二进制: $BIN_SRC"
+fi
+
+[[ -s "$STAGED_BIN" ]] || die "二进制是空文件: ${BIN_SRC:-$BIN_URL}"
+
+if [[ -n "$BIN_SHA256" ]]; then
+    command -v sha256sum >/dev/null 2>&1 || die "没有 sha256sum，无法校验 --sha256"
+    actual="$(sha256sum "$STAGED_BIN" | awk '{print $1}')"
+    [[ "$actual" == "$BIN_SHA256" ]] || die "sha256 不匹配: 期望 $BIN_SHA256，实际 $actual"
+    log "sha256 校验通过"
+fi
+
+# 粗判一下是不是 Linux 可执行文件，避免把 tar 包或 HTML 错误页装上去
+if [[ "$(head -c 4 "$STAGED_BIN" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]]; then
+    warn "${BIN_SRC:-$BIN_URL} 看着不像 ELF 可执行文件，请确认是 linux/amd64 编译产物"
+fi
+chmod 0755 "$STAGED_BIN"
+
+# ---------------------------------------------------------------- 停旧进程
+
+stop_running_agent
+
+# ---------------------------------------------------------------- 落盘
+
+install -d -m 0755 "$CONF_DIR" "$DATA_DIR" "$LOG_DIR" "${DATA_DIR}/work"
+
+# 原子替换，避免覆盖正在执行的文件时 ETXTBSY
+cp -f "$STAGED_BIN" "${INSTALL_BIN}.new"
+chmod 0755 "${INSTALL_BIN}.new"
+mv -f "${INSTALL_BIN}.new" "$INSTALL_BIN"
+log "二进制已安装: $INSTALL_BIN"
+
+# agent-id：机器身份，重装不变
+AGENT_ID_FILE="${DATA_DIR}/agent-id"
+gen_uuid() {
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        cat /proc/sys/kernel/random/uuid
+    elif command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr 'A-Z' 'a-z'
+    else
+        # 兜底：用内核随机数拼一个 v4 UUID
+        od -An -tx1 -N16 /dev/urandom | tr -d ' \n' | awk '{
+            printf "%s-%s-4%s-a%s-%s\n", substr($0,1,8), substr($0,9,4),
+                   substr($0,14,3), substr($0,18,3), substr($0,21,12)
+        }'
+    fi
+}
+
+# 换了 --data-dir 的话把身份带过去，否则 Server 上会多出一台"新机器"
+if [[ "$NEW_AGENT_ID" != "1" && -n "$OLD_DATA_DIR" && "$OLD_DATA_DIR" != "$DATA_DIR" \
+      && ! -s "$AGENT_ID_FILE" && -s "${OLD_DATA_DIR}/agent-id" ]]; then
+    cp -f "${OLD_DATA_DIR}/agent-id" "$AGENT_ID_FILE"
+    log "数据目录 ${OLD_DATA_DIR} -> ${DATA_DIR}，已沿用原 agent-id（旧目录未删除）"
+fi
+
+if [[ "$NEW_AGENT_ID" == "1" && -f "$AGENT_ID_FILE" ]]; then
+    mv -f "$AGENT_ID_FILE" "${AGENT_ID_FILE}.old.$(date +%Y%m%d%H%M%S)"
+    warn "已按 --new-agent-id 重置身份，Server 上会出现一台新机器，旧记录需要手工清理"
+fi
+
+if [[ -s "$AGENT_ID_FILE" ]]; then
+    AGENT_ID="$(tr -d '[:space:]' < "$AGENT_ID_FILE")"
+    log "沿用已有 agent-id: $AGENT_ID"
+else
+    AGENT_ID="$(gen_uuid)"
+    printf '%s\n' "$AGENT_ID" > "$AGENT_ID_FILE"
+    chmod 0644 "$AGENT_ID_FILE"
+    log "生成 agent-id: $AGENT_ID"
+fi
+
+# 配置文件
+if [[ -f "$CONF_FILE" ]]; then
+    cp -f "$CONF_FILE" "${CONF_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+fi
+
+cat > "${CONF_FILE}.new" <<EOF
+# atagent 配置，由 deploy/install.sh 生成于 $(date '+%Y-%m-%d %H:%M:%S')
+# 改完执行: systemctl restart atagent
+
+# Server 的 Agent TCP 端口
+server: "${SERVER}"
+# 本机显示名，全局唯一，与 agentId 互相解析
+tag: "${TAG}"
+
+data_dir: "${DATA_DIR}"
+log_dir: "${LOG_DIR}"
+agent_id_file: "${AGENT_ID_FILE}"
+# 任务执行的默认工作目录（任务自带 cwd 时以任务为准）
+work_dir: "${DATA_DIR}/work"
+
+# 本机最大并发任务数，1-4；只有空闲时改才生效
+concurrency: ${CONCURRENCY}
+
+# 心跳间隔（秒），Server 按此续租约
+heartbeat_sec: 5
+# 断线重连退避
+reconnect_min_ms: 500
+reconnect_max_ms: 15000
+# 单次执行日志上限 5MB，超出保留尾部并上报截断标记
+max_log_bytes: 5242880
+# 日志批量上送间隔
+log_batch_ms: 200
+log_level: "info"
+EOF
+mv -f "${CONF_FILE}.new" "$CONF_FILE"
+chmod 0644 "$CONF_FILE"
+log "配置已写入: $CONF_FILE"
+
+# ---------------------------------------------------------------- systemd unit
+
+render_unit() {
+    local tpl="${SCRIPT_DIR}/atagent.service"
+    [[ -f "$tpl" ]] || die "找不到 unit 模板: $tpl（请连同 deploy/ 目录一起拷贝到目标机）"
+    sed -e "s#@BIN@#${INSTALL_BIN}#g" \
+        -e "s#@CONFIG@#${CONF_FILE}#g" \
+        -e "s#@DATA_DIR@#${DATA_DIR}#g" \
+        -e "s#@LOG_DIR@#${LOG_DIR}#g" \
+        "$tpl" > "${UNIT_FILE}.new"
+    mv -f "${UNIT_FILE}.new" "$UNIT_FILE"
+    chmod 0644 "$UNIT_FILE"
+}
+
+render_unit
+log "systemd unit 已写入: $UNIT_FILE"
+
+if [[ "$DO_ENABLE" == "0" ]]; then
+    log "按 --no-enable 跳过 enable/start"
+elif ! systemd_or_skip; then
+    warn "当前系统没有运行 systemd，跳过 enable/start；手动启动: $INSTALL_BIN --config $CONF_FILE"
+else
+    systemctl daemon-reload
+    systemctl enable --now "${SERVICE_NAME}.service"
+    sleep 1
+    if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+        log "服务已启动"
+    else
+        systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+        die "服务启动失败，日志: journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
+    fi
+fi
+
+cat <<EOF
+
+[atagent] 安装完成
+  server      : ${SERVER}
+  tag         : ${TAG}
+  agent-id    : ${AGENT_ID}
+  concurrency : ${CONCURRENCY}
+  二进制      : ${INSTALL_BIN}
+  配置        : ${CONF_FILE}
+  数据目录    : ${DATA_DIR}
+  日志        : journalctl -u ${SERVICE_NAME} -f   /   ${LOG_DIR}/
+
+常用命令:
+  systemctl status ${SERVICE_NAME}
+  systemctl restart ${SERVICE_NAME}
+  journalctl -u ${SERVICE_NAME} -n 200 --no-pager
+EOF

@@ -1,0 +1,32 @@
+[Unit]
+Description=Auto Test Server (HTTP :8080 + Agent TCP :9800)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@HOME@
+
+# 可选：把 JAVA_OPTS / SPRING_PROFILES_ACTIVE / 数据库地址放这里，文件不存在也不报错
+EnvironmentFile=-/etc/atserver/server.env
+Environment="JAVA_OPTS=-Xms512m -Xmx2g -XX:+UseG1GC -Dfile.encoding=UTF-8"
+ExecStart=/bin/sh -c 'exec @JAVA@ $JAVA_OPTS -jar @JAR@ --spring.config.additional-location=file:/etc/atserver/'
+
+Restart=always
+RestartSec=5s
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+# JVM 收到 SIGTERM 退出码是 143，不算失败
+SuccessExitStatus=143
+
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atserver
+
+[Install]
+WantedBy=multi-user.target
