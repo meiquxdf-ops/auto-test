@@ -104,7 +104,11 @@ make test         # Server mvn test + Agent go test ./...
 - Agent：`agent/atagent` 静态二进制，拷到测试机用 `deploy/install.sh` 安装（systemd 托管）
 - 前端：`frontend/dist/` 静态文件，交给任意静态服务器/网关，`/api` 转发到 Server 8080
 
-生产部署（安装脚本、systemd、升级/卸载）见 [`deploy/README.md`](deploy/README.md)。
+装机也可以不碰命令行仓库：机器列表页「安装 Agent」抽屉支持复制命令 / `curl` 一行安装
+（`http://<server>:8080/api/agent/install.sh`）/ SSH 代装，Server 分发的二进制放
+`dist/agent/atagent`（`make agent-dist` 生成，`make dev` 的 compose 会自动填充）。
+
+生产部署（安装脚本、systemd、升级/卸载、在线安装）见 [`deploy/README.md`](deploy/README.md)。
 
 ## 产品语义速览
 

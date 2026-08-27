@@ -13,9 +13,76 @@
 - **测试同学**给自己的测试机装 Agent，**运维**批量装 Agent 和那台唯一的 Server，两边用的是同一个 `install.sh`。
 - 测试机上大家都有 **root**（`sudo -i` 或直接 root 登录）。脚本第一件事就是检查 uid，不是 root 直接退出。
 - Agent 以 **root 运行**：被测脚本要装包、改系统、读别人家目录，跑在受限用户下会莫名其妙失败。unit 里没有加任何沙箱选项，就是这个原因。
-- 只走内网。脚本**不依赖任何公网地址**，没有 `curl … | sh` 那种写法：二进制要么用 `--bin` 指本地文件，要么用 `--url` 指内网自己的文件服务。
+- 只走内网。脚本**不依赖任何公网地址**：二进制用 `--bin` 指本地文件，或用 `--url` 指内网地址——包括 Server 自己（`http://<server>:8080/api/agent/binary`，见下方「在线安装」）。
 
-运维台「机器列表」**不能安装** Agent：那一页只展示已经 `hello` 过的身份。「重启 Agent」只对**在线**会话下发 `stop`，让本机 systemd 再拉起；离线行（例如误注册留下的 `stale-docker-agent-01`）点了会返回「agent 当前离线，无法重启」，也不会在任何物理机上装出新进程。
+运维台「机器列表」的「安装 Agent」抽屉提供三种方式（见下方「在线安装」）：复制命令、curl 一行安装、SSH 代装；前两种最终都是操作者在目标机上以 root 执行本目录的 `install.sh`，第三种由 Server 通过 SSH 上传并代跑同一份脚本。「重启 Agent」只对**在线**会话下发 `stop`，让本机 systemd 再拉起；离线行（例如误注册留下的 `stale-docker-agent-01`）点了会返回「agent 当前离线，无法重启」，也不会在任何物理机上装出新进程。
+
+## 在线安装（运维台页面）
+
+`#/agents`（机器列表）右上角「安装 Agent」抽屉，三种方式共用同一份 tag / Server 地址 / 并发，全部走本目录的 `install.sh`：
+
+| 方式 | 谁执行 | 适用场景 |
+|---|---|---|
+| 复制命令 | 操作者在目标机 root 执行 | 目标机访问不了 Server :8080，或想全程手工 |
+| curl 安装 | 操作者在目标机 root 执行一行命令 | 目标机能访问 Server 的 HTTP :8080（内网） |
+| SSH 代装 | Server 通过 SSH 代跑 | 手边只有浏览器，目标机开着 sshd |
+
+### curl 一行安装
+
+```bash
+curl -fsSL http://<server-host>:8080/api/agent/install.sh | sudo bash -s -- --tag qa-node-01 --server <server-host>:9800
+```
+
+`/api/agent/install.sh` 是 Server 动态生成的引导脚本：从**同一台 Server** 下载真正的
+`install.sh`（`/api/agent/files/install.sh`）与 unit 模板（`/api/agent/files/atagent.service`），
+然后以 `--url http://<server>:8080/api/agent/binary --sha256 <hex>` 执行，命令行参数原样透传
+（`--concurrency`、`--data-dir`、`--new-agent-id` … 全都能带）。整条链路只在内网，不碰公网。
+
+### Server 怎么拿到要分发的二进制（打包约定）
+
+`install.sh` 与 `atagent.service` 在 `mvn package` 时从 `deploy/` 拷进 jar（`server/pom.xml`
+的 resources 配置，classpath `agent-dist/`），与仓库永远一致、jar 天生自带。**二进制不进 git
+也不进 jar**（平台产物），Server 运行时按顺序找：
+
+1. `atest.agent-dist.dir` 配置的目录（默认 `./dist/agent`，相对 Server 工作目录）下的 `atagent`；
+2. `../dist/agent/atagent`、`../agent/atagent`（源码仓库开发布局的兜底）。
+
+填充方式：
+
+```bash
+cd deploy && make agent-dist     # 等价 cd agent && make static，产物写到 <仓库根>/dist/agent/atagent
+```
+
+- `make dev` 已包含该步骤；compose 里的 agent 容器构建完也会自动把静态产物拷进
+  `../dist/agent`（挂载到 server 容器 `/app/dist/agent`），宿主机没有 go 也能就绪。
+- 生产部署：在 Server 机器上 jar 同级建 `dist/agent/`，把 linux/amd64 **静态**编译的
+  `atagent` 放进去（`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`），或改
+  `atest.agent-dist.dir` 指到现有分发目录。
+- 目录里没有二进制时：页面会给出同样的指引，`/api/agent/install.sh`、`/api/agent/binary`
+  返回 503（`binary_missing`），`curl -f` 会直接失败，不会把错误页当脚本执行。
+
+`GET /api/agent/install-info` 返回当前分发状态（是否就绪、sha256、大小、是否 ELF）。
+
+### SSH 代装
+
+抽屉里的「SSH 代装」让 Server 直接 SSH 到目标机：SFTP 上传 `atagent` + `install.sh` +
+`atagent.service` 到 `/tmp/atagent-ssh-install.<random>/`，执行
+`sudo bash ./install.sh --server … --tag … --concurrency … --bin ./atagent`
+（root 登录时不加 sudo），把输出尾部（默认 200 行）回显到页面，装完顺手删掉临时目录。
+
+- **凭据不落地**：口令 / 私钥只在单次请求的内存里用，不写 H2、不进日志（`org.apache.sshd`
+  日志压到 WARN，业务日志只记 host/tag/结果码）；远端命令行里也没有任何凭据。
+- **主机指纹**：默认 accept-new——首次连接记录到 `atest.ssh-install.known-hosts-file`
+  （默认 `./data/ssh-known-hosts`），之后指纹变了拒绝（`host_key_changed`）。页面可勾选
+  「跳过主机指纹校验」（有醒目警告，仅限受控内网）。
+- **超时**：连接 / 认证默认 10s，整个安装 180s（`atest.ssh-install.*` 可调），超时断开 SSH。
+- **私钥格式**：OpenSSH / PEM，支持 ed25519（jar 里带了 `net.i2p.crypto:eddsa`）、RSA、ECDSA，
+  加密私钥需附口令。
+- 返回结构化 JSON：`ok` / `exitCode` / `output` / `error` / `errorCode`。`errorCode` 取值：
+  `connect_failed`（连不上）、`auth_failed`、`bad_private_key`、`host_key_changed`、
+  `upload_failed`、`timeout`、`tag_conflict`（Server 在安装窗口内看到该 tag 的注册被拒）、
+  `install_failed`（其余非 0 退出，输出里带 `journalctl -u atagent` 尾部帮助定位）、
+  `binary_missing`。
 
 ## 装 Agent
 
@@ -31,11 +98,11 @@ sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01
 sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 --bin /tmp/atagent
 ```
 
-或者从内网文件服务拉（可选校验）：
+或者从内网文件服务拉（可选校验），Server 自己就是现成的文件服务：
 
 ```bash
 sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 \
-     --url http://10.0.0.5:8888/atagent --sha256 <hex>
+     --url http://10.0.0.5:8080/api/agent/binary --sha256 <hex>
 ```
 
 ### 参数
