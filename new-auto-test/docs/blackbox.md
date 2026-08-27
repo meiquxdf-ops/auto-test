@@ -37,9 +37,9 @@ UI 对照（不要用英文枚举当唯一断言）：
 ## TC04 include → block
 
 步骤：展开「判定配置（可选）」，打开「启用判定配置」。
-算子选「包含（include）」，匹配值 `MATCH_BLOCK`，判定为「阻塞」。
-命令 `echo MATCH_BLOCK`。立即下发。
-期望：徽章「阻塞」。
+算子选「包含（include）」，匹配值 `MATCH_BLOCK`，判定为「阻塞」；other 留空。
+命令 `echo MATCH_BLOCK`（exit 0，最后一行命中规则）。可用「判定预演」先贴 `MATCH_BLOCK` 看会判阻塞。
+期望：徽章「阻塞」，退出码仍为 0——判定优先于退出码。
 
 ## TC05 取消 → canceled
 
@@ -48,8 +48,14 @@ UI 对照（不要用英文枚举当唯一断言）：
 
 ## TC06 cwd 与 env
 
-步骤：cwd 填 `/tmp`。展开「环境变量」，添加 `FOO=bar`。命令 `pwd; echo FOO=$FOO`。立即下发。
-期望：日志含 `/tmp` 和 `FOO=bar`，徽章「通过」。
+步骤：cwd 填 `/tmp`。展开「环境变量」，添加 `FOO=bar`。命令：
+
+```
+pwd; echo FOO=$FOO; env | grep '^ATEST_' | sort; echo 0
+```
+
+立即下发。
+期望：日志含 `/tmp`、`FOO=bar`，以及 `ATEST_AGENT_ID` / `ATEST_EXECUTE_ID` / `ATEST_TAG`；徽章「通过」。
 
 ## TC07 空命令 / 未选机器
 
@@ -70,7 +76,19 @@ python3 -c "import sys; sys.stdout.write('A'*6000000); print(); print(0)"
 dd if=/dev/zero bs=1M count=6 2>/dev/null | tr '\0' 'A'; echo; echo 0
 ```
 
-期望：终端顶部出现「日志已截断：单次执行仅保留末 5MB」。
+或 awk 按行刷（alpine 一般自带）：
+
+```
+awk 'BEGIN{for(i=1;i<=70000;i++) printf "line %06d %s\n", i, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; print 0}'
+```
+
+期望：终端顶部出现「日志已截断：单次执行仅保留末 5MB」。截断不影响判定，exit 0 仍为「通过」。行号第一行应明显大于 1。
+
+## TC09 离线目标仍可创建（排队）
+
+步骤：已选 docker-agent-01 时把 Agent 停掉，等选择器变为「离线」。期望出现「已选机器中有 1 台不在线」黄条，此时「立即下发」仍可点，任务进入「排队中」。再拉起 Agent，应自动调度到终态。
+
+未选中的离线机器不能新勾选。空命令/空目标仍是前端拦截，不会打到服务端 400。
 
 ## 本环境 Docker 已知问题
 
