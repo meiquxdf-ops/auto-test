@@ -467,7 +467,7 @@ function rowClass({ row }: { row: Agent }) {
       </template>
     </el-dialog>
 
-    <!-- 安装 Agent（只生成 install.sh 命令，安装动作在目标机上完成） -->
+    <!-- 安装 Agent：复制命令 / curl 一行安装 / SSH 代装 -->
     <AgentInstallDrawer v-model="installVisible" :agents="agents" @refresh="refresh" />
 
     <!-- 机器时间线 -->
