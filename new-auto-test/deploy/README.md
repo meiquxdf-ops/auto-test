@@ -44,8 +44,7 @@ sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 \
 |---|---|
 | `--server HOST:PORT` | Server 的 Agent TCP 地址，首次安装必填，之后可省略（沿用旧配置） |
 | `--tag NAME` | 本机显示名，**全局唯一**，重名 Server 会拒绝。默认取 `hostname` |
-| `--data-dir DIR` | 数据目录，默认 `/var/lib/atagent`；放 `agent-id` 和执行工作区 |
-| `--log-dir DIR` | Agent 自身日志目录，默认 `/var/log/atagent` |
+| `--data-dir DIR` | 数据目录，默认 `/var/lib/atagent`；放 `agent-id`、执行日志尾部（`journal/`）、待确认结果（`spool/`） |
 | `--bin PATH` | 用本地二进制 |
 | `--url URL` | 从内网 URL 下载二进制（与 `--bin` 互斥） |
 | `--sha256 HEX` | 配合 `--url` 校验 |
@@ -85,28 +84,26 @@ curl -s http://<server-host>:8080/api/agents | grep <tag>
 /usr/local/bin/atagent               二进制
 /etc/atagent/config.yaml             配置
 /var/lib/atagent/agent-id            机器身份 UUID，重装保留
-/var/lib/atagent/work/               任务默认工作目录
-/var/log/atagent/                    Agent 自身日志
+/var/lib/atagent/journal/            每个执行的日志尾部（≤5MB）
+/var/lib/atagent/spool/fin/          尚未被 Server 确认的结果帧
 /etc/systemd/system/atagent.service  unit
 ```
+
+Agent **自身**日志只进 journald（`journalctl -u atagent`），没有独立日志目录；旧版脚本创建过的 `/var/log/atagent/` 永远是空的，`--uninstall --purge` 会顺手清掉。
 
 ### config.yaml
 
 ```yaml
 server: "10.0.0.5:9800"      # Server Agent TCP 端口
 tag: "qa-node-01"            # 显示名，全局唯一
-data_dir: "/var/lib/atagent"
-log_dir: "/var/log/atagent"
-agent_id_file: "/var/lib/atagent/agent-id"
-work_dir: "/var/lib/atagent/work"
+data_dir: "/var/lib/atagent" # agent-id、journal/、spool/ 都在这里
 concurrency: 1               # 1-4，只有空闲时改才生效
 heartbeat_sec: 5             # 心跳，Server 按此续租约
-reconnect_min_ms: 500
-reconnect_max_ms: 15000
 max_log_bytes: 5242880       # 单次执行 5MB 上限，超出保留尾部并标记截断
-log_batch_ms: 200
 log_level: "info"
 ```
+
+这里只有二进制真正会读的键（完整清单与可选键 `shell` / `kill_grace_sec` / `kill_on_shutdown` / `aliases` / `env` 见 [`agent/README.md`](../agent/README.md)「配置」）。旧版脚本写过的 `log_dir`、`agent_id_file`、`work_dir`、`reconnect_min_ms`、`reconnect_max_ms`、`log_batch_ms` 都是 Agent 不认识的键，写了也不生效：机器身份固定读 `<data_dir>/agent-id`，重连退避内置 500ms 起、30s 封顶，日志固定 200ms 一批上送。
 
 手工改完配置要 `systemctl restart atagent`。`concurrency` 也可以在运维台上通过 `PATCH /api/agents/{agentId}` 改，机器空闲时才允许。
 
@@ -115,8 +112,8 @@ log_level: "info"
 unit 里是 `atagent --config /etc/atagent/config.yaml`，并导出 `ATEST_CONFIG`（Agent 实际读取的环境变量）：
 
 - 接受 `--config <path>`（Go flag，`-config` 等价），或在没有该参数时读 `ATEST_CONFIG`；
-- 配置字段名与上面那份 `config.yaml` 一致；
-- `agent_id_file` 里的 UUID 就是 `agentId`，Agent 只读不写（安装脚本负责生成）；
+- 配置字段名与上面那份 `config.yaml` 一致；未知键会被忽略；
+- 机器身份是 `<data_dir>/agent-id`，安装时生成，Agent 沿用；
 - 收到 `SIGTERM` 时优雅退出。父进程被 systemd 以 `control-group` 方式回收，任务派生的子进程会一起被清掉，所以 Agent 自己不用兜底杀子进程树；
 - 前台运行，不要自己 daemonize（`Type=simple`）。
 

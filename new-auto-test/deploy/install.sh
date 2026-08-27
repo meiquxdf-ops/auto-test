@@ -18,12 +18,12 @@ CONF_FILE="${CONF_DIR}/config.yaml"
 INSTALL_BIN="/usr/local/bin/atagent"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 DEFAULT_DATA_DIR="/var/lib/atagent"
-DEFAULT_LOG_DIR="/var/log/atagent"
+# 旧版脚本写过的 Agent 日志目录；二进制从不往这里写（日志走 journald），仅卸载 --purge 时清理
+LEGACY_LOG_DIR="/var/log/atagent"
 
 SERVER=""
 TAG=""
 DATA_DIR=""
-LOG_DIR=""
 BIN_SRC=""
 BIN_URL=""
 BIN_SHA256=""
@@ -43,8 +43,7 @@ usage() {
 
   --server HOST:PORT   Server 的 Agent TCP 地址，例如 10.0.0.5:9800（首次安装必填）
   --tag NAME           本机显示名，全局唯一；默认取 hostname
-  --data-dir DIR       数据目录，默认 /var/lib/atagent（agent-id、执行工作区）
-  --log-dir DIR        Agent 自身日志目录，默认 /var/log/atagent
+  --data-dir DIR       数据目录，默认 /var/lib/atagent（agent-id、执行日志尾部、待确认结果）
   --bin PATH           使用本地二进制（默认自动在脚本同级、当前目录、../agent/ 下找 atagent）
   --url URL            从内网 URL 下载二进制（与 --bin 二选一）
   --sha256 HEX         配合 --url 校验下载结果
@@ -74,7 +73,8 @@ while [[ $# -gt 0 ]]; do
         --server)       need_value "$@"; SERVER="$2"; shift 2 ;;
         --tag)          need_value "$@"; TAG="$2"; shift 2 ;;
         --data-dir)     need_value "$@"; DATA_DIR="$2"; shift 2 ;;
-        --log-dir)      need_value "$@"; LOG_DIR="$2"; shift 2 ;;
+        # 旧参数：二进制没有独立日志目录（自身日志只写 journald），接受但忽略
+        --log-dir)      need_value "$@"; warn "--log-dir 已废弃并被忽略：Agent 日志看 journalctl -u ${SERVICE_NAME}"; shift 2 ;;
         --bin)          need_value "$@"; BIN_SRC="$2"; shift 2 ;;
         --url)          need_value "$@"; BIN_URL="$2"; shift 2 ;;
         --sha256)       need_value "$@"; BIN_SHA256="$2"; shift 2 ;;
@@ -156,13 +156,14 @@ if [[ "$DO_UNINSTALL" == "1" ]]; then
     fi
     rm -f "$INSTALL_BIN"
     if [[ "$DO_PURGE" == "1" ]]; then
-        # data_dir / log_dir 可能被 --data-dir --log-dir 改过，按配置里的实际值删
+        # data_dir 可能被 --data-dir 改过，按配置里的实际值删；
+        # log_dir 是旧版脚本遗留键（二进制从不读），有就一并清掉
         purge_read() {
             sed -n "s/^$1:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$CONF_FILE" 2>/dev/null | tail -1
         }
         purge_data="$(purge_read data_dir)"
         purge_log="$(purge_read log_dir)"
-        rm -rf "$CONF_DIR" "${purge_data:-$DEFAULT_DATA_DIR}" "${purge_log:-$DEFAULT_LOG_DIR}"
+        rm -rf "$CONF_DIR" "${purge_data:-$DEFAULT_DATA_DIR}" "${purge_log:-$LEGACY_LOG_DIR}"
         log "已卸载并清除配置与数据"
     else
         log "已卸载（保留 ${CONF_DIR} 与数据目录，重装后 agent-id 不变）"
@@ -180,13 +181,11 @@ conf_get() {
 OLD_SERVER="$(conf_get server)"
 OLD_TAG="$(conf_get tag)"
 OLD_DATA_DIR="$(conf_get data_dir)"
-OLD_LOG_DIR="$(conf_get log_dir)"
 OLD_CONCURRENCY="$(conf_get concurrency)"
 
 SERVER="${SERVER:-$OLD_SERVER}"
 TAG="${TAG:-$OLD_TAG}"
 DATA_DIR="${DATA_DIR:-${OLD_DATA_DIR:-$DEFAULT_DATA_DIR}}"
-LOG_DIR="${LOG_DIR:-${OLD_LOG_DIR:-$DEFAULT_LOG_DIR}}"
 CONCURRENCY="${CONCURRENCY:-${OLD_CONCURRENCY:-1}}"
 TAG="${TAG:-$(hostname -s 2>/dev/null || hostname)}"
 
@@ -201,7 +200,6 @@ SERVER_PORT="${SERVER##*:}"
 # 协议规定 displayTag 全局唯一，重名会被 Server 拒绝
 [[ "$CONCURRENCY" =~ ^[1-4]$ ]] || die "--concurrency 只能是 1-4，当前: $CONCURRENCY"
 [[ "$DATA_DIR" == /* ]] || die "--data-dir 必须是绝对路径"
-[[ "$LOG_DIR" == /* ]] || die "--log-dir 必须是绝对路径"
 [[ -z "$BIN_SRC" || -z "$BIN_URL" ]] || die "--bin 与 --url 只能选一个"
 
 # ---------------------------------------------------------------- 取二进制
@@ -258,7 +256,7 @@ stop_running_agent
 
 # ---------------------------------------------------------------- 落盘
 
-install -d -m 0755 "$CONF_DIR" "$DATA_DIR" "$LOG_DIR" "${DATA_DIR}/work"
+install -d -m 0755 "$CONF_DIR" "$DATA_DIR"
 
 # 原子替换，避免覆盖正在执行的文件时 ETXTBSY
 cp -f "$STAGED_BIN" "${INSTALL_BIN}.new"
@@ -312,31 +310,29 @@ fi
 cat > "${CONF_FILE}.new" <<EOF
 # atagent 配置，由 deploy/install.sh 生成于 $(date '+%Y-%m-%d %H:%M:%S')
 # 改完执行: systemctl restart atagent
+#
+# 这里只写二进制真正会读的键（完整清单见 agent/README.md「配置」）。
+# 机器身份固定读 <data_dir>/agent-id，不是配置项；
+# 重连退避（500ms 起、30s 封顶）与日志批量节奏（200ms）内置，不可配。
 
 # Server 的 Agent TCP 端口
 server: "${SERVER}"
 # 本机显示名，全局唯一，与 agentId 互相解析
 tag: "${TAG}"
 
+# 数据目录：agent-id、journal/（执行日志尾部）、spool/fin/（待确认结果）
 data_dir: "${DATA_DIR}"
-log_dir: "${LOG_DIR}"
-agent_id_file: "${AGENT_ID_FILE}"
-# 任务执行的默认工作目录（任务自带 cwd 时以任务为准）
-work_dir: "${DATA_DIR}/work"
 
 # 本机最大并发任务数，1-4；只有空闲时改才生效
 concurrency: ${CONCURRENCY}
 
 # 心跳间隔（秒），Server 按此续租约
 heartbeat_sec: 5
-# 断线重连退避
-reconnect_min_ms: 500
-reconnect_max_ms: 15000
 # 单次执行日志上限 5MB，超出保留尾部并上报截断标记
 max_log_bytes: 5242880
-# 日志批量上送间隔
-log_batch_ms: 200
 log_level: "info"
+# 可选键 shell / kill_grace_sec / kill_on_shutdown / aliases / env
+# 见 agent/config.example.yaml，按需追加
 EOF
 mv -f "${CONF_FILE}.new" "$CONF_FILE"
 chmod 0644 "$CONF_FILE"
@@ -350,7 +346,6 @@ render_unit() {
     sed -e "s#@BIN@#${INSTALL_BIN}#g" \
         -e "s#@CONFIG@#${CONF_FILE}#g" \
         -e "s#@DATA_DIR@#${DATA_DIR}#g" \
-        -e "s#@LOG_DIR@#${LOG_DIR}#g" \
         "$tpl" > "${UNIT_FILE}.new"
     mv -f "${UNIT_FILE}.new" "$UNIT_FILE"
     chmod 0644 "$UNIT_FILE"
@@ -384,7 +379,7 @@ verify_registered() {
 if [[ "$DO_ENABLE" == "0" ]]; then
     log "按 --no-enable 跳过 enable/start"
 elif ! systemd_or_skip; then
-    warn "当前系统没有运行 systemd，跳过 enable/start；手动启动: $INSTALL_BIN --config $CONF_FILE"
+    warn "当前系统没有运行 systemd，跳过 enable/start；手动启动: $INSTALL_BIN run --config $CONF_FILE"
 else
     systemctl daemon-reload
     systemctl enable --now "${SERVICE_NAME}.service"
@@ -408,7 +403,7 @@ cat <<EOF
   二进制      : ${INSTALL_BIN}
   配置        : ${CONF_FILE}
   数据目录    : ${DATA_DIR}
-  日志        : journalctl -u ${SERVICE_NAME} -f   /   ${LOG_DIR}/
+  日志        : journalctl -u ${SERVICE_NAME} -f   （Agent 自身日志只写 journald）
 
 常用命令:
   atagent status                   # 本机视角：connected 才是真在线

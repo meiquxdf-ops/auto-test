@@ -64,25 +64,13 @@ pwd; echo FOO=$FOO; env | grep '^ATEST_' | sort; echo 0
 
 ## TC08 日志截断横幅
 
-步骤：命令：
-
-```
-python3 -c "import sys; sys.stdout.write('A'*6000000); print(); print(0)"
-```
-
-若容器无 python3，改用：
-
-```
-dd if=/dev/zero bs=1M count=6 2>/dev/null | tr '\0' 'A'; echo; echo 0
-```
-
-或 awk 按行刷（alpine 一般自带）：
+compose 里的 alpine Agent **没有 python3**，不要用 python 当主路径。用 awk（busybox 自带）：
 
 ```
 awk 'BEGIN{for(i=1;i<=70000;i++) printf "line %06d %s\n", i, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; print 0}'
 ```
 
-期望：终端顶部出现「日志已截断：单次执行仅保留末 5MB」。截断不影响判定，exit 0 仍为「通过」。行号第一行应明显大于 1。
+期望：终端顶部「日志已截断：单次执行仅保留末 5MB」；首行 seq 明显大于 1；判定仍为「通过」。API 对照：`truncated=true`，`logBytes` 约 5MB。
 
 ## TC09 离线目标仍可创建（排队）
 
