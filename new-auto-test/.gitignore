@@ -1,0 +1,10 @@
+/target/
+/.idea/
+*.iml
+/node_modules/
+/dist/
+/agent/atagent
+*.log
+.DS_Store
+/server/.mvn/
+/server/data/
