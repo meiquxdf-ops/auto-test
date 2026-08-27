@@ -73,6 +73,12 @@
             <artifactId>sshd-sftp</artifactId>
             <version>${sshd.version}</version>
         </dependency>
+        <!-- sshd 的可选 EdDSA 支持：没有它解析不了 ssh-ed25519 私钥（现在最常见的密钥类型） -->
+        <dependency>
+            <groupId>net.i2p.crypto</groupId>
+            <artifactId>eddsa</artifactId>
+            <version>0.3.0</version>
+        </dependency>
 
         <dependency>
             <groupId>io.netty</groupId>
