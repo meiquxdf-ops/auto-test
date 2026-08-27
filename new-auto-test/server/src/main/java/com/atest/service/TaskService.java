@@ -86,6 +86,26 @@ public class TaskService {
     public static final int BATCH_MAX_ITEMS = 100;
     public static final int REQUEST_ID_QUERY_CAP = 200;
 
+    /**
+     * Tail of the queue, handed out atomically. {@code maxQueueOrder() + 1} inside the creation
+     * transaction is racy: two concurrent creates read the same max before either commits and
+     * both store the same position (seen live: 15 parallel POSTs produced two duplicate pairs).
+     * Seeded from the DB once; a rollback leaves a gap, which is harmless, and the reorder API
+     * only ever rebases pending tasks downwards so the counter stays past every stored value.
+     */
+    private final java.util.concurrent.atomic.AtomicLong queueTail = new java.util.concurrent.atomic.AtomicLong(-1);
+
+    private long nextQueueOrder() {
+        if (queueTail.get() < 0) {
+            synchronized (queueTail) {
+                if (queueTail.get() < 0) {
+                    queueTail.set(taskRepository.maxQueueOrder());
+                }
+            }
+        }
+        return queueTail.incrementAndGet();
+    }
+
     @Transactional
     public TaskView create(CreateTaskRequest request) {
         String requestId = normalizeRequestId(request.getRequestId(), false);
@@ -208,7 +228,7 @@ public class TaskService {
         task.setOperator(prepared.operator());
         task.setTimeoutSec(prepared.timeoutSec());
         task.setPriority(prepared.priority());
-        task.setQueueOrder(taskRepository.maxQueueOrder() + 1);
+        task.setQueueOrder(nextQueueOrder());
         task.setStatus(TaskStatus.PENDING);
         task.setTotalCount(prepared.targets().size());
         task.setRequestId(requestId);
@@ -540,7 +560,7 @@ public class TaskService {
         task.setOperator(operator == null || operator.isBlank() ? source.getOperator() : operator);
         task.setTimeoutSec(source.getTimeoutSec());
         task.setPriority(source.getPriority());
-        task.setQueueOrder(taskRepository.maxQueueOrder() + 1);
+        task.setQueueOrder(nextQueueOrder());
         task.setStatus(TaskStatus.PENDING);
         task.setTotalCount(selected.size());
         task.setRerunOf(source.getId());
