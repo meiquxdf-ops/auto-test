@@ -1,0 +1,162 @@
+spring:
+  profiles:
+    active: dev
+  main:
+    allow-circular-references: true
+---
+logging:
+  config: classpath:logback-spring.xml
+  level:
+    com:
+      hj:
+        chaos:
+          mapper: debug
+server:
+  port: 1992
+netty:
+  port: 1993
+spring:
+  config:
+    activate:
+      on-profile: dev
+  servlet:
+    multipart:
+      maxFileSize: 1000MB
+      maxRequestSize: 1000MB
+  application:
+    name: chaos
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://mysql.hongjunwei.com:3307/auto_test_new?serverTimezone=Asia/Shanghai
+    username: root
+    password: HongJun@123
+  jpa:
+    show-sql: true
+  mvc:
+    view:
+      suffix: .html
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  web:
+    resources:
+      static-locations: file:/Users/eason/IdeaProjects/auto-test/auto-test/dist/
+  redis:
+    host: 172.16.120.3
+    port: 6379
+    password: HongJun@123
+rocketmq:
+  name-server: rocketmq.hongjunwei.com:9876
+  producer:
+    group: auto_test_server
+minio:
+  endpoint: http://172.16.120.3:9000
+  accessKey: P9bBBzS3vSb2tYRV
+  secretKey: yvzyqaXzFdudSdjOWeSqpxGbVQl1DYy0
+  bucketNameForBug: chaosbug
+  bucketNameForUser: chaosuser
+  imgType: image/png
+  domain: 'http://172.16.120.3:9000'
+---
+logging:
+  config: classpath:logback-spring.xml
+  level:
+    com:
+      hj:
+        chaos:
+          mapper: debug
+server:
+  port: 1992
+netty:
+  port: 1993
+spring:
+  config:
+    activate:
+      on-profile: bangong
+  servlet:
+    multipart:
+      maxFileSize: 1000MB
+      maxRequestSize: 1000MB
+  application:
+    name: chaos
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://mysql.hongjunwei.com:3307/auto_test_new?serverTimezone=Asia/Shanghai
+    username: root
+    password: HongJun@123
+  jpa:
+    show-sql: true
+  mvc:
+    view:
+      suffix: .html
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  web:
+    resources:
+      static-locations: file:/home/admin/auto-test-server_ui
+  redis:
+    host: redis.hongjunwei.com
+    port: 6379
+    password: HongJun@123
+rocketmq:
+  name-server: rocketmq.hongjunwei.com:9876
+  producer:
+    group: auto_test_server
+minio:
+  endpoint: http://minio.hj-micro.com:9000
+  accessKey: zORepsJuGeB8vwte
+  secretKey: RD2p1QXD2rwdrJgHHLWOzQk1zt3jJTBO
+  bucketNameForBug: chaosbug
+  bucketNameForUser: chaosuser
+  imgType: image/png
+  domain: 'http://minio.hj-micro.com:9000'
+---
+logging:
+  config: classpath:logback-spring.xml
+  level:
+    com:
+      hj:
+        chaos:
+          mapper: debug
+server:
+  port: 1992
+netty:
+  port: 1993
+spring:
+  config:
+    activate:
+      on-profile: yanfa
+  servlet:
+    multipart:
+      maxFileSize: 1000MB
+      maxRequestSize: 1000MB
+  application:
+    name: chaos
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://mysql.hongjunwei.com:3307/auto_test_new?serverTimezone=Asia/Shanghai
+    username: root
+    password: HongJun@123
+  jpa:
+    show-sql: true
+  mvc:
+    view:
+      suffix: .html
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  web:
+      resources:
+       static-locations: file:/home/admin/auto-test-server_ui
+  redis:
+    host: redis.hongjunwei.com
+    port: 6379
+    password: HongJun@123
+rocketmq:
+  name-server: rocketmq.hongjunwei.com:9876
+  producer:
+    group: auto_test_server
+minio:
+  endpoint: http://minio.hongjunwei.com:9000
+  accessKey: MpRoKd3GvzMR4CKg
+  secretKey: PVqJEn35836ij1L33IouWYkjWBeKG3IR
+  imgType: image/png
+  domain: 'http://minio.hongjunwei.com:9000'

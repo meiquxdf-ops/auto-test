@@ -1,0 +1,11 @@
+.DS_Store
+**/.DS_Store
+**/.idea/
+**/target/
+**/out/
+**/logs/
+**/node_modules/
+**/dist/
+*.zip
+*.log
+
