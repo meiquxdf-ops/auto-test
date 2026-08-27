@@ -41,6 +41,14 @@ public class LogService {
     }
 
     /**
+     * 一行带 Agent 侧权威序号的日志；seq &lt;= 0 表示未编号（由调用方按 fromSeq 顺延分配）。
+     * Go Agent 的 log 帧 fromSeq 是"本批之前"的序号（exclusive），但每行对象自带 seq，
+     * 以行内 seq 为准可以同时兼容两种 fromSeq 约定。
+     */
+    public record IncomingLine(int seq, String text) {
+    }
+
+    /**
      * Appends agent lines starting at {@code fromSeq}. Sequences already stored are ignored, which
      * makes the agent free to resend after a reconnect.
      *
@@ -51,19 +59,32 @@ public class LogService {
         if (lines == null || lines.isEmpty()) {
             return exec.getLogSeq();
         }
+        List<IncomingLine> numbered = new ArrayList<>(lines.size());
+        int seq = Math.max(fromSeq, 1);
+        for (String raw : lines) {
+            numbered.add(new IncomingLine(seq++, raw));
+        }
+        return appendLines(exec, numbered);
+    }
+
+    /** 同 {@link #append}，但每行都带权威序号（乱序/跨批重发也能正确去重与补位）。 */
+    @Transactional
+    public int appendLines(TaskExecutionEntity exec, List<IncomingLine> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return exec.getLogSeq();
+        }
         Instant now = Instant.now();
         List<ExecutionLogEntity> batch = new ArrayList<>();
         List<LogLineView> published = new ArrayList<>();
         long addedBytes = 0;
         String lastLine = exec.getLastLine();
-        int seq = Math.max(fromSeq, 1);
 
-        for (String raw : lines) {
-            int currentSeq = seq++;
+        for (IncomingLine in : lines) {
+            int currentSeq = in.seq();
             if (currentSeq <= exec.getLogSeq()) {
                 continue;
             }
-            String line = raw == null ? "" : raw;
+            String line = in.text() == null ? "" : in.text();
             if (line.length() > MAX_LINE_CHARS) {
                 line = line.substring(0, MAX_LINE_CHARS) + "…[line truncated]";
             }

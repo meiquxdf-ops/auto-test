@@ -4,6 +4,7 @@
 /node_modules/
 /dist/
 /agent/atagent
+/agent/data/
 *.log
 .DS_Store
 /server/.mvn/

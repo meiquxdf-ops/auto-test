@@ -340,8 +340,8 @@ public class AgentSessionService {
             return;
         }
         executionService.markRunning(exec, "log");
-        List<String> lines = readStrings(linesNode);
-        int ackSeq = logService.append(exec, fromSeq, lines);
+        List<LogService.IncomingLine> lines = readLogLines(linesNode, fromSeq);
+        int ackSeq = logService.appendLines(exec, lines);
         conn.reply(env.id, Map.of("ackSeq", ackSeq));
     }
 
@@ -392,9 +392,10 @@ public class AgentSessionService {
             return;
         }
 
-        List<String> trailing = readStrings(Json.first(a, "lines", "tail"));
+        List<LogService.IncomingLine> trailing = readLogLines(Json.first(a, "lines", "tail"),
+                intValue(a, exec.getLogSeq() + 1, "fromSeq", "from"));
         if (!trailing.isEmpty()) {
-            logService.append(exec, intValue(a, exec.getLogSeq() + 1, "fromSeq", "from"), trailing);
+            logService.appendLines(exec, trailing);
         }
         Integer exitCode = null;
         JsonNode exitNode = Json.first(a, "exitCode", "code", "rc");
@@ -452,6 +453,36 @@ public class AgentSessionService {
         List<String> out = new ArrayList<>(node.size());
         for (JsonNode n : node) {
             out.add(n.isTextual() ? n.asText() : n.toString());
+        }
+        return out;
+    }
+
+    /**
+     * Go Agent 的 log 帧里每行是结构化对象 {seq,ts,s,x}（x 为正文，seq 为权威序号）。
+     * 行内 seq 优先（Agent 的帧级 fromSeq 是 exclusive 语义，按 fromSeq+下标编号会差一，
+     * 导致跨批次丢行、ack 停滞）；纯字符串行退回 fromSeq 顺延编号。
+     */
+    private static List<LogService.IncomingLine> readLogLines(JsonNode node, int fromSeq) {
+        if (node == null || !node.isArray()) {
+            return List.of();
+        }
+        List<LogService.IncomingLine> out = new ArrayList<>(node.size());
+        int next = Math.max(fromSeq, 1);
+        for (JsonNode n : node) {
+            String text;
+            int seq = next;
+            if (n.isObject()) {
+                JsonNode t = Json.first(n, "x", "text", "line", "msg");
+                text = t != null && t.isTextual() ? t.asText() : n.toString();
+                JsonNode s = n.get("seq");
+                if (s != null && s.isNumber() && s.asInt() > 0) {
+                    seq = s.asInt();
+                }
+            } else {
+                text = n.isTextual() ? n.asText() : n.toString();
+            }
+            out.add(new LogService.IncomingLine(seq, text));
+            next = seq + 1;
         }
         return out;
     }

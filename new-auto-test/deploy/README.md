@@ -143,7 +143,7 @@ cat /var/lib/atagent/agent-id
 ```bash
 sudo useradd -r -m -d /opt/atserver atserver
 sudo install -d -m 0755 /etc/atserver
-sudo install -o atserver -g atserver -m 0644 target/atserver.jar /opt/atserver/atserver.jar
+sudo install -o atserver -g atserver -m 0644 target/atest-server.jar /opt/atserver/atserver.jar
 
 sudo sed -e "s#@USER@#atserver#g" \
          -e "s#@HOME@#/opt/atserver#g" \

@@ -1,0 +1,50 @@
+# new-auto-test 开发编排：Server + Frontend
+#
+#   cd deploy && make dev        # 一键起（推荐）
+#   docker compose up            # 等价
+#
+# 起来之后：
+#   - 前端     http://127.0.0.1:5173  （Vite dev server，/api 反代到 server）
+#   - HTTP API http://127.0.0.1:8080
+#   - Agent    TCP 127.0.0.1:9800（Agent 跑在宿主机上：见 `make agent`）
+#
+# Agent 不进容器：它要在真实测试机上执行 bash 命令，开发时直接
+# `make agent` 在宿主机跑一个连进来即可。
+
+services:
+  server:
+    image: maven:3.9-eclipse-temurin-17
+    container_name: atest-server
+    working_dir: /app
+    command: mvn -q spring-boot:run
+    volumes:
+      - ../server:/app
+      - m2-cache:/root/.m2
+    ports:
+      - "8080:8080"   # HTTP API + SSE + H2 console(/h2-console)
+      - "9800:9800"   # Agent 长度前缀 TCP
+    environment:
+      MAVEN_OPTS: -Dmaven.repo.local=/root/.m2/repository
+    restart: unless-stopped
+
+  frontend:
+    image: node:18-bookworm
+    container_name: atest-frontend
+    working_dir: /app
+    # vite.config.ts 里 host 是 127.0.0.1，容器内必须用 --host 0.0.0.0 覆盖
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ../frontend:/app
+      - node-modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      # vite.config.ts 读 VITE_API_BASE 作为 /api 反代目标；容器网络里指向 server 服务
+      VITE_API_BASE: http://server:8080
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  m2-cache:
+  node-modules:
