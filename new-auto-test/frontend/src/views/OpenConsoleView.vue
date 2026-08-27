@@ -1,25 +1,38 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { listTasksByRequestId } from '@/api/tasks'
-import { errorMessage } from '@/api/http'
-import { EXECUTION_STATUSES, type Execution, type ExecutionStatus, type Task } from '@/api/types'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { cancelTask, listTasksByRequestId, rerunTask } from '@/api/tasks'
+import { ApiError, errorMessage, toastError, toastOk } from '@/api/http'
+import {
+  EXECUTION_STATUSES,
+  type Execution,
+  type ExecutionStatus,
+  type RerunMode,
+  type Task,
+} from '@/api/types'
 import { copyText, durationBetween, formatFullTime, formatTime } from '@/utils/format'
 import { callbackStatusMeta, isTerminal, statusMeta } from '@/utils/status'
+import CopyableId from '@/components/CopyableId.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
-import CopyableId from '@/components/CopyableId.vue'
+import OpenLogDrawer from '@/components/open/OpenLogDrawer.vue'
+import OpenTimelineDrawer from '@/components/open/OpenTimelineDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const LAST_KEY = 'nat.openConsole.requestId'
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/
-/** 进行中的任务自动展开，但最多这些个，避免一次挂 100 张明细表 */
-const AUTO_EXPAND_MAX = 5
 
-const deepLinkId = typeof route.query.requestId === 'string' ? route.query.requestId.trim() : ''
+/** 旧请求页的外链带过一个 reuqestId 拼写错误，两种写法都认 */
+const deepLinkId = (() => {
+  for (const key of ['requestId', 'reuqestId'] as const) {
+    const v = route.query[key]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return ''
+})()
 const initialId = deepLinkId || localStorage.getItem(LAST_KEY) || ''
 
 const requestIdInput = ref(initialId)
@@ -31,7 +44,6 @@ const error = ref('')
 const searched = ref(false)
 const lastLoadedAt = ref<number | null>(null)
 const autoRefresh = ref(true)
-const expanded = ref<Record<string, boolean>>({})
 
 let timer: number | null = null
 let seq = 0
@@ -53,8 +65,8 @@ async function query(silent = false) {
     error.value = ''
     lastLoadedAt.value = Date.now()
     localStorage.setItem(LAST_KEY, id)
-    if (route.query.requestId !== id) {
-      void router.replace({ query: { ...route.query, requestId: id } })
+    if (route.query.requestId !== id || route.query.reuqestId !== undefined) {
+      void router.replace({ query: { ...route.query, requestId: id, reuqestId: undefined } })
     }
   } catch (e) {
     if (mine !== seq) return
@@ -72,7 +84,20 @@ async function query(silent = false) {
   }
 }
 
+/* ------------------------------------------------------------ 尺寸自适应 */
+
+const viewportHeight = ref(900)
+
+function syncViewport() {
+  viewportHeight.value = window.innerHeight
+}
+
+/** 表头常驻，任务多也不会把页面拉长到看不到表尾 */
+const tableMaxHeight = computed(() => Math.max(320, viewportHeight.value - 300))
+
 onMounted(() => {
+  syncViewport()
+  window.addEventListener('resize', syncViewport, { passive: true })
   if (idValid.value) void query()
   timer = window.setInterval(() => {
     if (!autoRefresh.value || !queriedId.value || !hasActive.value) return
@@ -83,6 +108,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
+  window.removeEventListener('resize', syncViewport)
 })
 
 /* ------------------------------------------------------------ 页面状态 */
@@ -100,27 +126,90 @@ const viewState = computed<ViewState>(() => {
 /** 已有结果时的刷新失败：不清屏，只在顶部提示 */
 const refreshError = computed(() => (tasks.value.length ? error.value : ''))
 
-/* ------------------------------------------------------------ 汇总 */
+/* ------------------------------------------------------------ 汇总（任务级） */
 
-const totals = computed(() => {
-  let exec = 0
-  let running = 0
-  let pending = 0
-  let done = 0
-  for (const t of tasks.value) {
-    for (const s of EXECUTION_STATUSES) {
-      const n = t.counts[s]
-      if (!n) continue
-      exec += n
-      if (s === 'running' || s === 'dispatching') running += n
-      else if (s === 'pending') pending += n
-      else done += n
-    }
-  }
-  return { exec, running, pending, done }
+const taskCounts = computed(() => {
+  const map = {} as Record<ExecutionStatus, number>
+  for (const s of EXECUTION_STATUSES) map[s] = 0
+  for (const t of tasks.value) map[t.status] += 1
+  return map
 })
 
 const hasActive = computed(() => tasks.value.some((t) => !isTerminal(t.status)))
+
+/** 进度按「到达终态的任务数 / 总数」算，运行中不计 */
+const terminalCount = computed(() => tasks.value.filter((t) => isTerminal(t.status)).length)
+const progressPct = computed(() =>
+  tasks.value.length ? (terminalCount.value / tasks.value.length) * 100 : 0,
+)
+
+interface OverallBadge {
+  label: string
+  color: string
+  bg: string
+  border: string
+}
+
+/**
+ * 整批的总体状态（任务级）：
+ * 有未终态的任务 → 进行中；全部 pass → 完成；全部 fail/block → 失败；
+ * 全部 canceled → 已取消；其余混合终态（含 exception）统一算部分失败。
+ */
+const overall = computed<OverallBadge>(() => {
+  const c = taskCounts.value
+  const total = tasks.value.length
+  const pick = (s: ExecutionStatus, label: string): OverallBadge => {
+    const m = statusMeta(s)
+    return { label, color: m.color, bg: m.bg, border: m.border }
+  }
+  if (c.pending + c.dispatching + c.running > 0) return pick('running', '进行中')
+  if (c.pass === total) return pick('pass', '完成')
+  if (c.fail + c.block === total) return pick('fail', '失败')
+  if (c.canceled === total) return pick('canceled', '已取消')
+  return pick('block', '部分失败')
+})
+
+interface StatItem {
+  key: string
+  label: string
+  n: number
+  color: string
+}
+
+const statItems = computed<StatItem[]>(() => {
+  const c = taskCounts.value
+  const items: StatItem[] = [
+    { key: 'total', label: '总任务', n: tasks.value.length, color: 'var(--nat-text)' },
+    { key: 'pass', label: '通过', n: c.pass, color: statusMeta('pass').color },
+    { key: 'fail', label: '失败', n: c.fail, color: statusMeta('fail').color },
+    { key: 'block', label: '阻塞', n: c.block, color: statusMeta('block').color },
+    { key: 'running', label: '执行中', n: c.running + c.dispatching, color: statusMeta('running').color },
+    { key: 'pending', label: '排队', n: c.pending, color: statusMeta('pending').color },
+    { key: 'exception', label: '异常', n: c.exception, color: statusMeta('exception').color },
+    { key: 'canceled', label: '已取消', n: c.canceled, color: statusMeta('canceled').color },
+  ]
+  return items
+})
+
+const operators = computed(() => {
+  const set = new Set<string>()
+  for (const t of tasks.value) if (t.operator) set.add(t.operator)
+  return [...set]
+})
+
+/** 起止：最早的创建/开始时间 → 最晚的结束时间；还有任务在跑时结束记为进行中 */
+const timeSpan = computed(() => {
+  let start: number | null = null
+  let end: number | null = null
+  for (const t of tasks.value) {
+    const starts = [t.createdAt, ...t.executions.map((e) => e.startedAt ?? e.createdAt)]
+    for (const s of starts) if (s && (start === null || s < start)) start = s
+    const ends = [t.finishedAt, ...t.executions.map((e) => e.finishedAt)]
+    for (const e of ends) if (e && (end === null || e > end)) end = e
+  }
+  if (hasActive.value) end = null
+  return { start, end, duration: start ? durationBetween(start, end) : '-' }
+})
 
 const callbackSummary = computed(() => {
   const map = new Map<Task['callbackStatus'], number>()
@@ -131,52 +220,72 @@ const callbackSummary = computed(() => {
   return [...map.entries()].map(([status, n]) => ({ status, n, meta: callbackStatusMeta(status) }))
 })
 
-/* ------------------------------------------------------------ 任务卡片 */
+/* ------------------------------------------------------------ 筛选 */
 
-interface CardVM {
-  task: Task
-  done: number
-  total: number
-  segments: { key: ExecutionStatus; pct: number; color: string; label: string }[]
-}
+const keyword = ref('')
+const statusFilter = ref<ExecutionStatus | ''>('')
 
-const cards = computed<CardVM[]>(() =>
-  tasks.value.map((task) => {
-    const base = task.executions.length || 1
-    return {
-      task,
-      done: EXECUTION_STATUSES.filter(isTerminal).reduce((n, s) => n + task.counts[s], 0),
-      total: task.executions.length || task.total || 0,
-      segments: EXECUTION_STATUSES.filter((s) => task.counts[s] > 0).map((s) => ({
-        key: s,
-        pct: (task.counts[s] / base) * 100,
-        color: statusMeta(s).color,
-        label: `${statusMeta(s).label} ${task.counts[s]}`,
-      })),
-    }
-  }),
+/** 只列出现存的状态，避免一排空选项 */
+const statusOptions = computed(() =>
+  EXECUTION_STATUSES.filter((s) => taskCounts.value[s] > 0 || statusFilter.value === s),
 )
 
-const autoOpenIds = computed(
-  () => new Set(tasks.value.filter((t) => !isTerminal(t.status)).slice(0, AUTO_EXPAND_MAX).map((t) => t.taskId)),
-)
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return tasks.value.filter((t) => {
+    if (statusFilter.value && t.status !== statusFilter.value) return false
+    if (!kw) return true
+    return (
+      t.command.toLowerCase().includes(kw) ||
+      t.taskId.toLowerCase().includes(kw) ||
+      (t.operator ?? '').toLowerCase().includes(kw) ||
+      t.targets.some((x) => x.toLowerCase().includes(kw)) ||
+      t.executions.some(
+        (e) =>
+          (e.lastLine ?? '').toLowerCase().includes(kw) ||
+          (e.displayTag || e.agentId || '').toLowerCase().includes(kw),
+      )
+    )
+  })
+})
 
-function isOpen(task: Task): boolean {
-  return expanded.value[task.taskId] ?? autoOpenIds.value.has(task.taskId)
+function clearFilters() {
+  keyword.value = ''
+  statusFilter.value = ''
 }
 
-function toggle(task: Task) {
-  expanded.value = { ...expanded.value, [task.taskId]: !isOpen(task) }
+/* ------------------------------------------------------------ 行辅助 */
+
+function machinesOf(task: Task): string {
+  const set = new Set<string>()
+  for (const e of task.executions) {
+    const m = e.displayTag || e.agentId
+    if (m) set.add(m)
+  }
+  if (set.size) return [...set].join('、')
+  return task.targets.join('、') || '-'
 }
 
-const openCount = computed(() => tasks.value.reduce((n, t) => n + (isOpen(t) ? 1 : 0), 0))
-const allOpen = computed(() => tasks.value.length > 0 && openCount.value === tasks.value.length)
+function taskDisconnected(task: Task): boolean {
+  return task.executions.some((e) => e.status === 'running' && e.disconnected)
+}
 
-function toggleAll() {
-  const next = !allOpen.value
-  const map: Record<string, boolean> = {}
-  for (const t of tasks.value) map[t.taskId] = next
-  expanded.value = map
+function startOf(task: Task): number | null {
+  let v: number | null = null
+  for (const e of task.executions) {
+    if (e.startedAt && (v === null || e.startedAt < v)) v = e.startedAt
+  }
+  return v ?? task.createdAt ?? null
+}
+
+function endOf(task: Task): number | null {
+  if (!isTerminal(task.status)) return null
+  if (task.finishedAt) return task.finishedAt
+  let v: number | null = null
+  for (const e of task.executions) {
+    if (e.finishedAt && (v === null || e.finishedAt > v)) v = e.finishedAt
+  }
+  return v
 }
 
 function callbackDetail(task: Task): string {
@@ -188,16 +297,252 @@ function callbackDetail(task: Task): string {
   return parts.join('\n')
 }
 
-function machineOf(ex: Execution): string {
-  return ex.displayTag || ex.agentId || '-'
-}
-
-function lineOf(ex: Execution): string {
-  return ex.lastLine || ex.conditionHit || '-'
-}
-
 function gotoExecution(exec: Execution) {
   void router.push(`/executions/${exec.executeId}`)
+}
+
+/* ------------------------------------------------------------ 展开行 */
+
+/** 展开行的 key 必须是稳定引用：每次渲染都传新数组会让自动刷新把展开的行收起来 */
+const expandedKeys = ref<string[]>([])
+
+function onExpandChange(row: Task, state: Task[] | boolean) {
+  const expanded = Array.isArray(state) ? state.some((r) => r.taskId === row.taskId) : state
+  const has = expandedKeys.value.includes(row.taskId)
+  if (expanded === has) return
+  expandedKeys.value = expanded
+    ? [...expandedKeys.value, row.taskId]
+    : expandedKeys.value.filter((k) => k !== row.taskId)
+}
+
+/* ------------------------------------------------------------ 勾选与批量操作 */
+
+const selected = ref<Task[]>([])
+
+function onSelectionChange(rows: Task[]) {
+  selected.value = rows
+}
+
+/** 5 秒轮询会替换整批对象，批量操作前按 taskId 换成最新数据 */
+const selectedFresh = computed<Task[]>(() => {
+  const byId = new Map(tasks.value.map((t) => [t.taskId, t]))
+  return selected.value.map((s) => byId.get(s.taskId) ?? s)
+})
+
+const CANCELABLE = new Set<ExecutionStatus>(['pending', 'dispatching', 'running'])
+
+const selectedCancelable = computed(() => selectedFresh.value.filter((t) => CANCELABLE.has(t.status)))
+
+const batchCanceling = ref(false)
+const batchRerunning = ref(false)
+
+async function batchCancel() {
+  const list = selectedCancelable.value
+  if (!list.length) {
+    ElMessage.warning('选中的任务没有可取消项')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将取消选中的 ${list.length} 个任务，运行中的执行会被杀掉并判为 canceled。`,
+      '取消选中任务',
+      {
+        type: 'warning',
+        confirmButtonText: '确认取消',
+        cancelButtonText: '再想想',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  batchCanceling.value = true
+  try {
+    const results = await Promise.allSettled(list.map((t) => cancelTask(t.taskId)))
+    const ok = results.filter((r) => r.status === 'fulfilled').length
+    const failN = results.length - ok
+    if (ok > 0 && failN === 0) toastOk(`已取消 ${ok} 个任务`)
+    else if (ok > 0) ElMessage.warning(`已取消 ${ok} 个任务，${failN} 个失败`)
+    else toastError(results.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason, '批量取消失败')
+    await query(true)
+  } finally {
+    batchCanceling.value = false
+  }
+}
+
+async function batchRerun(mode: RerunMode) {
+  const list = selectedFresh.value
+  if (!list.length) return
+  const text =
+    mode === 'inplace'
+      ? `将原地重跑选中的 ${list.length} 个任务：清空执行记录与日志并重新入队，历史结果不可恢复；还在执行中的任务会被拒绝。`
+      : `将为选中的 ${list.length} 个任务复制命令、目标、判定配置各建一条新任务。新任务会换新 requestId，不会出现在当前查询里。`
+  try {
+    await ElMessageBox.confirm(text, mode === 'inplace' ? '重新执行选中任务' : '重跑为新记录', {
+      type: mode === 'inplace' ? 'warning' : 'info',
+      confirmButtonText: mode === 'inplace' ? '清空并重跑' : '创建新任务',
+      cancelButtonText: '取消',
+      confirmButtonClass: mode === 'inplace' ? 'el-button--danger' : '',
+    })
+  } catch {
+    return
+  }
+  batchRerunning.value = true
+  try {
+    const results = await Promise.allSettled(list.map((t) => rerunTask(t.taskId, mode)))
+    const ok = results.filter((r) => r.status === 'fulfilled').length
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    // 原地重跑还在执行中的任务，Server 返回 409
+    const conflictN = rejected.filter((r) => r.reason instanceof ApiError && r.reason.status === 409).length
+    if (!rejected.length) {
+      if (mode === 'new') {
+        const ids = [
+          ...new Set(
+            results
+              .filter((r): r is PromiseFulfilledResult<Task | null> => r.status === 'fulfilled')
+              .map((r) => r.value?.requestId)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ]
+        toastOk(
+          ids.length
+            ? `已建 ${ok} 条新任务，新 requestId 不在本批：${ids.join('、')}`
+            : `已建 ${ok} 条新任务（新 requestId 不在本批）`,
+        )
+      } else {
+        toastOk(`已重跑 ${ok} 个任务`)
+      }
+    } else if (ok > 0) {
+      ElMessage.warning(
+        `已重跑 ${ok} 个，${rejected.length} 个失败${conflictN ? `（${conflictN} 个还在执行中，需先取消）` : ''}`,
+      )
+    } else if (conflictN === rejected.length) {
+      toastError(null, '选中任务都还在执行中，先取消或等它们结束再重跑')
+    } else {
+      toastError(rejected[0]?.reason, '批量重跑失败')
+    }
+    await query(true)
+  } finally {
+    batchRerunning.value = false
+  }
+}
+
+function onBatchRerunCommand(c: string | number | object) {
+  if (c === 'inplace' || c === 'new') void batchRerun(c)
+}
+
+/* ------------------------------------------------------------ 单行取消 / 重跑 */
+
+const acting = ref('')
+
+async function onCancel(task: Task) {
+  const runningN = task.counts.running + task.counts.dispatching
+  try {
+    await ElMessageBox.confirm(
+      runningN
+        ? `有 ${runningN} 条执行在跑，取消会杀掉对应进程组并判为 canceled。`
+        : '未开始的执行会直接置为 canceled。',
+      '取消任务',
+      { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '再想想', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return
+  }
+  acting.value = `cancel:${task.taskId}`
+  try {
+    await cancelTask(task.taskId)
+    toastOk('已下发取消指令')
+    await query(true)
+  } catch (e) {
+    toastError(e, '取消失败')
+  } finally {
+    acting.value = ''
+  }
+}
+
+async function onRerun(task: Task, mode: RerunMode) {
+  const text =
+    mode === 'inplace'
+      ? '会清空这条任务的执行记录与日志并重新入队，历史结果不可恢复。'
+      : '复制命令、目标、判定配置另起一条任务。新任务会换新 requestId，不会出现在当前查询里。'
+  try {
+    await ElMessageBox.confirm(text, mode === 'inplace' ? '原地重跑' : '重跑为新记录', {
+      type: mode === 'inplace' ? 'warning' : 'info',
+      confirmButtonText: mode === 'inplace' ? '清空并重跑' : '创建新任务',
+      cancelButtonText: '取消',
+      confirmButtonClass: mode === 'inplace' ? 'el-button--danger' : '',
+    })
+  } catch {
+    return
+  }
+  acting.value = `rerun:${task.taskId}`
+  try {
+    const created = await rerunTask(task.taskId, mode)
+    toastOk(
+      mode === 'inplace'
+        ? '已原地重跑'
+        : created?.requestId
+          ? `已创建新任务，requestId ${created.requestId}（不在本批，请另查）`
+          : `已创建新任务${created?.taskId ? ` ${created.taskId.slice(0, 8)}` : ''}`,
+    )
+    await query(true)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) toastError(null, '任务还在执行中，先取消或等它结束再重跑')
+    else toastError(e, '重跑失败')
+    await query(true)
+  } finally {
+    acting.value = ''
+  }
+}
+
+function onRerunCommand(c: string | number | object, task: Task) {
+  if (c === 'inplace' || c === 'new') void onRerun(task, c)
+}
+
+/* ------------------------------------------------------------ 日志 / 节点抽屉 */
+
+interface LogDrawerCtx {
+  executeId: string
+  command: string
+}
+
+interface TimelineDrawerCtx {
+  executeId: string
+  machine: string
+}
+
+const logDrawer = ref<LogDrawerCtx | null>(null)
+const timelineDrawer = ref<TimelineDrawerCtx | null>(null)
+
+/** 挑「最值得看」的执行：running > dispatching > 最近开始/创建的 */
+function pickBestExecution(task: Task): Execution | null {
+  const list = task.executions
+  if (!list.length) return null
+  const ts = (e: Execution) => e.startedAt ?? e.createdAt ?? 0
+  const latest = (arr: Execution[]) => arr.reduce((a, b) => (ts(b) > ts(a) ? b : a))
+  const running = list.filter((e) => e.status === 'running')
+  if (running.length) return latest(running)
+  const dispatching = list.filter((e) => e.status === 'dispatching')
+  if (dispatching.length) return latest(dispatching)
+  return latest(list)
+}
+
+function openLog(task: Task) {
+  const ex = pickBestExecution(task)
+  if (!ex) {
+    ElMessage.warning('还没有执行记录')
+    return
+  }
+  logDrawer.value = { executeId: ex.executeId, command: task.command }
+}
+
+function openNodes(task: Task) {
+  const ex = pickBestExecution(task)
+  if (!ex) {
+    ElMessage.warning('还没有执行记录')
+    return
+  }
+  timelineDrawer.value = { executeId: ex.executeId, machine: ex.displayTag || ex.agentId || '' }
 }
 
 /* ------------------------------------------------------------ 速览 */
@@ -219,7 +564,7 @@ async function copySnippet() {
 
 <template>
   <div class="page oc">
-    <div class="oc__wrap">
+    <div class="oc__wrap" :class="{ 'oc__wrap--narrow': viewState !== 'result' }">
       <div class="page-head">
         <div>
           <h2 class="page-head__title">开放查询</h2>
@@ -257,113 +602,292 @@ async function copySnippet() {
       <template v-if="viewState === 'result'">
         <el-alert v-if="refreshError" type="error" :closable="false" show-icon :title="refreshError" class="oc__alert" />
 
-        <div class="panel oc__sum">
-          <div class="oc__stat">
-            <b class="oc__n">{{ cards.length }}</b>
-            <span class="oc__l">任务</span>
-          </div>
-          <div class="oc__stat">
-            <b class="oc__n oc__n--run">{{ totals.running }}</b>
-            <span class="oc__l">执行中</span>
-          </div>
-          <div class="oc__stat">
-            <b class="oc__n">{{ totals.pending }}</b>
-            <span class="oc__l">排队</span>
-          </div>
-          <div class="oc__stat oc__stat--wide">
-            <b class="oc__n">{{ totals.done }} / {{ totals.exec }}</b>
-            <span class="oc__l">执行完成</span>
-          </div>
-
-          <div class="oc__cbs">
-            <span class="oc__l">回调</span>
-            <template v-if="callbackSummary.length">
-              <el-tooltip
-                v-for="c in callbackSummary"
-                :key="c.status"
-                :content="c.meta.desc"
-                placement="top"
-                popper-class="oc-pop"
-              >
-                <el-tag size="small" effect="light" :type="c.meta.type" class="oc__cb">
-                  {{ c.meta.label }} {{ c.n }}
-                </el-tag>
-              </el-tooltip>
-            </template>
-            <span v-else class="oc__l">未配置</span>
-          </div>
-
-          <button class="link-btn oc__all" @click="toggleAll">{{ allOpen ? '全部收起' : '全部展开' }}</button>
-        </div>
-
-        <article v-for="card in cards" :key="card.task.taskId" class="panel oc-card">
-          <button type="button" class="oc-card__head" @click="toggle(card.task)">
-            <el-icon class="oc-card__caret" :class="{ 'is-open': isOpen(card.task) }"><ArrowRight /></el-icon>
-            <StatusPill :status="card.task.status" />
-            <el-tooltip :content="card.task.command" placement="top-start" :show-after="400" popper-class="oc-pop">
-              <code class="oc-card__cmd">{{ card.task.command }}</code>
-            </el-tooltip>
-            <span class="oc-card__bar">
-              <i
-                v-for="seg in card.segments"
-                :key="seg.key"
-                class="oc-card__seg"
-                :style="{ width: `${seg.pct}%`, background: seg.color }"
-                :title="seg.label"
-              />
-            </span>
-            <span class="oc-card__prog">{{ card.done }} / {{ card.total }}</span>
-          </button>
-
-          <div class="oc-card__meta">
-            <span class="oc-card__id">taskId <CopyableId :value="card.task.taskId" :head="10" /></span>
-            <span v-if="card.task.operator">操作人 {{ card.task.operator }}</span>
-            <span v-if="card.task.createdAt" :title="formatFullTime(card.task.createdAt)">
-              创建 {{ formatTime(card.task.createdAt) }}
-            </span>
-            <el-tooltip
-              v-if="card.task.callbackStatus !== 'none'"
-              :content="callbackDetail(card.task)"
-              placement="top"
-              popper-class="oc-pop"
+        <!-- 概览 -->
+        <section class="panel oc-ov">
+          <div class="oc-ov__row">
+            <span
+              class="oc-ov__badge"
+              :style="{ color: overall.color, background: overall.bg, borderColor: overall.border }"
             >
-              <el-tag size="small" effect="light" :type="callbackStatusMeta(card.task.callbackStatus).type">
-                回调{{ callbackStatusMeta(card.task.callbackStatus).label }}
-              </el-tag>
-            </el-tooltip>
-            <span v-if="card.task.callbackLastError" class="oc-card__err" :title="card.task.callbackLastError">
-              回调错误 {{ card.task.callbackLastError }}
+              {{ overall.label }}
+            </span>
+            <div class="oc-ov__stats">
+              <div v-for="it in statItems" :key="it.key" class="oc-ov__stat">
+                <b class="oc-ov__n" :style="{ color: it.n ? it.color : 'var(--nat-text-weak)' }">{{ it.n }}</b>
+                <span class="oc-ov__l">{{ it.label }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="oc-ov__prog">
+            <span class="oc-ov__l">执行进度</span>
+            <el-progress
+              :percentage="progressPct"
+              :stroke-width="10"
+              :show-text="false"
+              class="oc-ov__prog-bar"
+            />
+            <span class="oc-ov__prog-num mono">
+              {{ terminalCount }}/{{ tasks.length }} · {{ progressPct.toFixed(1) }}%
             </span>
           </div>
 
-          <div v-if="isOpen(card.task)" class="oc-exec">
-            <template v-if="card.task.executions.length">
-              <div class="oc-exec__row oc-exec__row--head">
-                <span class="c-st">状态</span>
-                <span class="c-machine">机器</span>
-                <span class="c-id">executeId</span>
-                <span class="c-exit">退出码</span>
-                <span class="c-line">最后一行 / 原因</span>
-                <span class="c-dur">耗时</span>
-                <span class="c-act" />
-              </div>
-              <div v-for="ex in card.task.executions" :key="ex.executeId" class="oc-exec__row">
-                <span class="c-st"><StatusPill :status="ex.status" :disconnected="ex.disconnected" /></span>
-                <span class="c-machine" :title="machineOf(ex)">{{ machineOf(ex) }}</span>
-                <span class="c-id"><CopyableId :value="ex.executeId" :head="10" /></span>
-                <span class="c-exit mono">{{ ex.exitCode ?? '-' }}</span>
-                <span class="c-line mono" :title="lineOf(ex)">{{ lineOf(ex) }}</span>
-                <span class="c-dur mono">{{ durationBetween(ex.startedAt, ex.finishedAt) }}</span>
-                <span class="c-act">
-                  <button class="link-btn" @click="gotoExecution(ex)">查看日志</button>
-                </span>
-              </div>
-            </template>
-            <p v-else class="oc-exec__none">
-              还没有生成执行记录 · 目标 {{ card.task.targets.join('、') || '未指定' }}
-            </p>
+          <div class="oc-ov__meta">
+            <span class="oc-ov__meta-i">
+              <span class="oc-ov__k">操作人</span>
+              <template v-if="operators.length">
+                <el-tag v-for="op in operators" :key="op" size="small" effect="plain" class="oc-ov__op">
+                  {{ op }}
+                </el-tag>
+              </template>
+              <span v-else class="muted">-</span>
+            </span>
+            <span class="oc-ov__meta-i">
+              <span class="oc-ov__k">开始</span>
+              <span class="mono" :title="formatFullTime(timeSpan.start)">{{ formatTime(timeSpan.start) }}</span>
+            </span>
+            <span class="oc-ov__meta-i">
+              <span class="oc-ov__k">结束</span>
+              <span v-if="timeSpan.end" class="mono" :title="formatFullTime(timeSpan.end)">
+                {{ formatTime(timeSpan.end) }}
+              </span>
+              <span v-else class="oc-ov__live">进行中</span>
+            </span>
+            <span class="oc-ov__meta-i">
+              <span class="oc-ov__k">时长</span>
+              <span class="mono">{{ timeSpan.duration }}</span>
+            </span>
+            <span class="oc-ov__meta-i oc-ov__meta-i--cb">
+              <span class="oc-ov__k">回调</span>
+              <template v-if="callbackSummary.length">
+                <el-tooltip
+                  v-for="c in callbackSummary"
+                  :key="c.status"
+                  :content="c.meta.desc"
+                  placement="top"
+                  popper-class="oc-pop"
+                >
+                  <el-tag size="small" effect="light" :type="c.meta.type" class="oc-ov__cb">
+                    {{ c.meta.label }} {{ c.n }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+              <span v-else class="muted">未配置</span>
+            </span>
           </div>
-        </article>
+        </section>
+
+        <!-- 筛选 + 批量操作 + 任务表 -->
+        <section class="panel oc-list">
+          <div class="oc-tools">
+            <el-input
+              v-model="keyword"
+              class="oc-tools__kw"
+              placeholder="搜索命令 / taskId / 操作人 / 目标 / 最后一行"
+              clearable
+              :prefix-icon="'Search'"
+            />
+            <el-select v-model="statusFilter" class="oc-tools__status" placeholder="全部状态" clearable>
+              <el-option label="全部状态" value="" />
+              <el-option
+                v-for="s in statusOptions"
+                :key="s"
+                :label="`${statusMeta(s).label} ${taskCounts[s]}`"
+                :value="s"
+              />
+            </el-select>
+            <span class="muted oc-tools__count">{{ filtered.length }} / {{ tasks.length }}</span>
+
+            <div class="oc-tools__end">
+              <el-dropdown
+                split-button
+                type="primary"
+                size="small"
+                :disabled="!selectedFresh.length || batchRerunning"
+                :persistent="false"
+                @click="batchRerun('inplace')"
+                @command="onBatchRerunCommand"
+              >
+                重新执行选中 ({{ selectedFresh.length }})
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="inplace">原地重跑（清空记录）</el-dropdown-item>
+                    <el-dropdown-item command="new">重跑为新记录（换新 requestId）</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button
+                size="small"
+                type="warning"
+                plain
+                :disabled="!selectedCancelable.length"
+                :loading="batchCanceling"
+                @click="batchCancel"
+              >
+                取消选中 ({{ selectedCancelable.length }})
+              </el-button>
+            </div>
+          </div>
+
+          <el-table
+            v-if="filtered.length"
+            :data="filtered"
+            row-key="taskId"
+            size="default"
+            :max-height="tableMaxHeight"
+            :expand-row-keys="expandedKeys"
+            @expand-change="onExpandChange"
+            @selection-change="onSelectionChange"
+          >
+            <el-table-column type="selection" width="40" :reserve-selection="true" />
+
+            <el-table-column type="expand" width="36">
+              <template #default="{ row }">
+                <div class="detail">
+                  <el-table v-if="row.executions.length" :data="row.executions" size="small" class="detail__table">
+                    <el-table-column label="状态" width="112">
+                      <template #default="{ row: ex }">
+                        <StatusPill :status="ex.status" :disconnected="ex.disconnected" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="机器" min-width="130" show-overflow-tooltip>
+                      <template #default="{ row: ex }">{{ ex.displayTag || ex.agentId || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="executeId" width="150">
+                      <template #default="{ row: ex }">
+                        <CopyableId :value="ex.executeId" :head="10" />
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="退出码" width="72" align="center">
+                      <template #default="{ row: ex }">
+                        <span class="mono">{{ ex.exitCode ?? '-' }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="最后一行 / 原因" min-width="200">
+                      <template #default="{ row: ex }">
+                        <code class="cmd" :title="ex.lastLine || ex.conditionHit || ''">
+                          {{ ex.lastLine || ex.conditionHit || '-' }}
+                        </code>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="耗时" width="88">
+                      <template #default="{ row: ex }">
+                        <span class="mono">{{ durationBetween(ex.startedAt, ex.finishedAt) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="" width="88" align="right">
+                      <template #default="{ row: ex }">
+                        <el-button size="small" text type="primary" @click="gotoExecution(ex)">查看详情</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <p v-else class="detail__none">
+                    还没有生成执行记录 · 目标 {{ row.targets.join('、') || '未指定' }}
+                  </p>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="任务" min-width="280">
+              <template #default="{ row }">
+                <el-tooltip
+                  :content="row.command"
+                  placement="top-start"
+                  :show-after="400"
+                  :persistent="false"
+                  popper-class="oc-pop"
+                >
+                  <code class="cmd">{{ row.command }}</code>
+                </el-tooltip>
+                <div class="row-meta">
+                  <CopyableId :value="row.taskId" :head="8" />
+                  <el-tooltip
+                    v-if="row.callbackStatus !== 'none'"
+                    :content="callbackDetail(row)"
+                    placement="top"
+                    :persistent="false"
+                    popper-class="oc-pop"
+                  >
+                    <el-tag size="small" effect="light" :type="callbackStatusMeta(row.callbackStatus).type">
+                      回调{{ callbackStatusMeta(row.callbackStatus).label }}
+                    </el-tag>
+                  </el-tooltip>
+                  <span v-if="row.operator" class="muted">{{ row.operator }}</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="执行时间" width="132">
+              <template #default="{ row }">
+                <div class="time-stack">
+                  <span class="mono time-cell" :title="formatFullTime(startOf(row))">
+                    {{ formatTime(startOf(row)) }}
+                  </span>
+                  <span v-if="endOf(row)" class="mono time-cell muted" :title="formatFullTime(endOf(row))">
+                    {{ formatTime(endOf(row)) }}
+                  </span>
+                  <span v-else-if="!isTerminal(row.status)" class="time-live">进行中</span>
+                  <span v-else class="muted">-</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="机器" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="mono machine">{{ machinesOf(row) }}</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="状态" width="112">
+              <template #default="{ row }">
+                <StatusPill :status="row.status" :disconnected="taskDisconnected(row)" />
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" width="216" align="right">
+              <template #default="{ row }">
+                <div class="acts">
+                  <el-button size="small" text type="primary" @click="openLog(row)">日志</el-button>
+                  <el-button size="small" text type="primary" @click="openNodes(row)">节点</el-button>
+                  <el-button
+                    v-if="!isTerminal(row.status)"
+                    size="small"
+                    text
+                    type="danger"
+                    :loading="acting === `cancel:${row.taskId}`"
+                    @click="onCancel(row)"
+                  >
+                    取消
+                  </el-button>
+                  <el-dropdown
+                    trigger="click"
+                    placement="bottom-end"
+                    :persistent="false"
+                    popper-class="oc-menu"
+                    @command="(c: string | number | object) => onRerunCommand(c, row)"
+                  >
+                    <el-button size="small" text type="primary" :loading="acting === `rerun:${row.taskId}`">
+                      重跑
+                      <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="inplace" :disabled="!isTerminal(row.status)">
+                          原地重跑（清空记录）
+                        </el-dropdown-item>
+                        <el-dropdown-item command="new">重跑为新记录（换新 requestId）</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <EmptyState v-else variant="search" title="没有符合条件的任务" desc="换个状态或关键字试试">
+            <el-button size="small" @click="clearFilters">清空筛选</el-button>
+          </EmptyState>
+        </section>
       </template>
 
       <div v-else-if="viewState === 'loading'" class="panel oc__loading">
@@ -410,15 +934,28 @@ async function copySnippet() {
         </div>
       </div>
     </div>
+
+    <!-- 抽屉按需挂载：@closed 时卸载，日志抽屉的 SSE 随组件销毁断开 -->
+    <OpenLogDrawer
+      v-if="logDrawer"
+      :execute-id="logDrawer.executeId"
+      :command="logDrawer.command"
+      @closed="logDrawer = null"
+    />
+    <OpenTimelineDrawer
+      v-if="timelineDrawer"
+      :execute-id="timelineDrawer.executeId"
+      :machine="timelineDrawer.machine"
+      @closed="timelineDrawer = null"
+    />
   </div>
 </template>
 
 <style scoped>
-.oc__wrap {
-  /* 阅读宽度：超宽屏也不把一行内容拉到两米长 */
+/* 结果态放开宽度让表格有空间；速览/空态维持阅读宽度 */
+.oc__wrap--narrow {
   max-width: 960px;
   margin: 0 auto;
-  container-type: inline-size;
 }
 
 /* ------------------------------------------------------------ 查询条 */
@@ -489,305 +1026,238 @@ async function copySnippet() {
   white-space: nowrap;
 }
 
-/* ------------------------------------------------------------ 汇总条 */
-
 .oc__alert {
   margin-bottom: 12px;
 }
 
-.oc__sum {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 11px 16px;
+/* ------------------------------------------------------------ 概览 */
+
+.oc-ov {
+  padding: 14px 16px;
   margin-bottom: 12px;
-  flex-wrap: nowrap;
 }
 
-.oc__stat {
+.oc-ov__row {
+  display: flex;
+  align-items: center;
+  gap: 16px 20px;
+  flex-wrap: wrap;
+}
+
+.oc-ov__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.oc-ov__stats {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 18px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.oc-ov__stat {
   display: flex;
   align-items: baseline;
   gap: 5px;
-  flex: none;
-  /* 数字位数变化时不推挤后面的内容 */
-  min-width: 68px;
   white-space: nowrap;
 }
 
-.oc__stat--wide {
-  min-width: 118px;
-}
-
-.oc__n {
+.oc-ov__n {
   font-size: 18px;
   font-weight: 640;
   font-variant-numeric: tabular-nums;
 }
 
-.oc__n--run {
-  color: #2563eb;
-}
-
-.oc__l {
+.oc-ov__l {
   flex: none;
   color: var(--nat-text-weak);
   font-size: 12px;
   white-space: nowrap;
 }
 
-.oc__cbs {
+.oc-ov__prog {
   display: flex;
   align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.oc-ov__prog-bar {
+  flex: 1;
+  min-width: 120px;
+}
+
+.oc-ov__prog-num {
+  flex: none;
+  color: var(--nat-text-sub);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.oc-ov__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px 22px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+
+.oc-ov__meta-i {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  margin-left: auto;
   min-width: 0;
   flex-wrap: wrap;
 }
 
-.oc__cb {
+.oc-ov__k {
   flex: none;
+  color: var(--nat-text-weak);
+  font-size: 12px;
+}
+
+.oc-ov__op {
+  font-weight: 500;
+}
+
+.oc-ov__cb {
   cursor: default;
   font-variant-numeric: tabular-nums;
 }
 
-.oc__all {
-  flex: none;
+.oc-ov__live {
+  color: #2563eb;
   font-size: 12px;
 }
 
-/* 一行放不下时整组换行，而不是把回调标签挤没 */
-@container (max-width: 860px) {
-  .oc__sum {
-    flex-wrap: wrap;
-  }
+/* ------------------------------------------------------------ 筛选 + 批量 */
 
-  .oc__cbs {
-    margin-left: 0;
-  }
+.oc-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--nat-border);
 }
 
-/* ------------------------------------------------------------ 任务卡片 */
-
-.oc-card {
-  margin-bottom: 10px;
+.oc-tools__kw {
+  width: 300px;
+  max-width: 100%;
 }
 
-.oc-card__head {
+.oc-tools__status {
+  width: 132px;
+}
+
+.oc-tools__count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.oc-tools__end {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 11px 14px 5px;
-  background: none;
-  border: 0;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
+  margin-left: auto;
 }
 
-.oc-card__caret {
-  flex: none;
-  font-size: 12px;
-  color: var(--nat-text-weak);
-  transition: transform 0.15s ease;
-}
+/* ------------------------------------------------------------ 表格 */
 
-.oc-card__caret.is-open {
-  transform: rotate(90deg);
-}
-
-.oc-card__cmd {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.cmd {
+  display: block;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12.5px;
   color: #26303d;
-}
-
-.oc-card__bar {
-  display: flex;
-  flex: none;
-  width: 84px;
-  height: 5px;
-  border-radius: 3px;
-  overflow: hidden;
-  background: #eef1f6;
-}
-
-.oc-card__seg {
-  height: 100%;
-}
-
-.oc-card__prog {
-  flex: none;
-  min-width: 56px;
-  text-align: right;
-  font-size: 12px;
-  color: var(--nat-text-sub);
-  font-variant-numeric: tabular-nums;
-}
-
-.oc-card__meta {
-  display: flex;
-  align-items: center;
-  gap: 4px 14px;
-  flex-wrap: wrap;
-  padding: 0 14px 11px 36px;
-  color: var(--nat-text-weak);
-  font-size: 12px;
-}
-
-.oc-card__id {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.oc-card__err {
-  max-width: 320px;
-  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #dc2626;
 }
 
-/* ------------------------------------------------------------ 执行明细 */
-
-.oc-exec {
-  container-type: inline-size;
-  border-top: 1px solid var(--nat-border);
-  padding: 4px 8px 6px;
-}
-
-.oc-exec__none {
-  margin: 0;
-  padding: 10px 6px;
-  color: var(--nat-text-weak);
-  font-size: 12px;
-}
-
-/* 窄屏：两行、四列；executeId 与耗时让位，不堆 min-width 撑出横向滚动 */
-.oc-exec__row {
-  display: grid;
+.row-meta {
+  display: flex;
   align-items: center;
-  gap: 2px 10px;
-  padding: 5px 6px;
-  grid-template-columns: 132px minmax(0, 1fr) 78px 68px;
-  grid-template-areas:
-    'st machine exit act'
-    'line line line line';
-}
-
-.oc-exec__row + .oc-exec__row {
-  border-top: 1px solid #f1f3f7;
-}
-
-.oc-exec__row--head {
-  display: none;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--nat-border);
-  color: var(--nat-text-weak);
+  gap: 8px;
+  margin-top: 2px;
   font-size: 11.5px;
+  flex-wrap: wrap;
 }
 
-.c-st {
-  grid-area: st;
+.time-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.4;
 }
 
-.c-machine {
-  grid-area: machine;
-}
-
-.c-id {
-  grid-area: id;
-  display: none;
-}
-
-.c-exit {
-  grid-area: exit;
-}
-
-.c-line {
-  grid-area: line;
-}
-
-.c-dur {
-  grid-area: dur;
-  display: none;
-}
-
-.c-act {
-  grid-area: act;
-  text-align: right;
-}
-
-.c-machine,
-.c-id,
-.c-line,
-.c-exit,
-.c-dur {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.time-cell {
+  font-size: 12px;
+  color: var(--nat-text-sub);
   white-space: nowrap;
-  font-size: 12.5px;
 }
 
-.c-line {
+.time-live {
+  color: #2563eb;
+  font-size: 12px;
+}
+
+.machine {
+  font-size: 12px;
   color: var(--nat-text-sub);
 }
 
-.c-exit::before {
-  content: '退出 ';
+.acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+
+.acts :deep(.el-button) {
+  margin-left: 0;
+  padding: 5px 6px;
+}
+
+/* ------------------------------------------------------------ 展开面板 */
+
+:deep(.el-table__expanded-cell) {
+  padding: 0;
+  background: #fafbfd;
+}
+
+:deep(.el-table__expanded-cell:hover) {
+  background: #fafbfd !important;
+}
+
+.detail {
+  min-width: 0;
+  padding: 10px 14px 12px;
+}
+
+.detail__table {
+  width: 100%;
+  border: 1px solid var(--nat-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.detail__none {
+  margin: 0;
+  padding: 4px 2px;
   color: var(--nat-text-weak);
-}
-
-.oc-exec__row--head .c-exit::before {
-  content: '';
-}
-
-.c-act .link-btn {
-  font-size: 12.5px;
-}
-
-@container (min-width: 640px) {
-  .oc-exec__row {
-    grid-template-columns: 132px minmax(88px, 1fr) 56px minmax(140px, 2fr) 66px 68px;
-    grid-template-areas: 'st machine exit line dur act';
-  }
-
-  .oc-exec__row--head {
-    display: grid;
-  }
-
-  .c-dur {
-    display: block;
-  }
-
-  .c-exit {
-    text-align: center;
-  }
-
-  .c-exit::before {
-    content: '';
-  }
-}
-
-@container (min-width: 880px) {
-  .oc-exec__row {
-    grid-template-columns: 132px minmax(88px, 1fr) 146px 56px minmax(150px, 2fr) 66px 68px;
-    grid-template-areas: 'st machine id exit line dur act';
-  }
-
-  .c-id {
-    display: block;
-  }
+  font-size: 12px;
 }
 
 /* CopyableId 在窄列里省略文本，复制图标不参与压缩 */
@@ -803,11 +1273,11 @@ async function copySnippet() {
   white-space: nowrap;
 }
 
-.oc :deep(.copyable__icon) {
+.oc :deep(.copyable__btn) {
   flex: none;
 }
 
-.oc__cur :deep(.copyable__icon) {
+.oc__cur :deep(.copyable__btn) {
   opacity: 0.55;
 }
 
@@ -868,5 +1338,9 @@ async function copySnippet() {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
+}
+
+.oc-menu .el-dropdown-menu__item {
+  min-width: 148px;
 }
 </style>
