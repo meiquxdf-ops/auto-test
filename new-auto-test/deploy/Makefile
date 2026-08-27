@@ -20,7 +20,7 @@ TAG         ?= dev-$(shell hostname -s 2>/dev/null || echo node)
 CONCURRENCY ?= 1
 
 .PHONY: help dev down logs restart ps \
-        server agent agent-build front \
+        server agent agent-build agent-dist front \
         build build-server build-agent build-front test local clean
 
 help: ## 显示本帮助
@@ -28,7 +28,7 @@ help: ## 显示本帮助
 
 ## ---- Docker 一键开发 ----
 
-dev: build-server ## 一键起 Server(:8080/:9800) + 前端(:5173) + docker-agent-01
+dev: build-server agent-dist ## 一键起 Server(:8080/:9800) + 前端(:5173) + docker-agent-01
 	$(COMPOSE) up --build
 
 down: ## 停止并移除容器
@@ -51,6 +51,14 @@ server: ## 本地起 Server（HTTP :8080 + Agent TCP :9800）
 agent-build: ## 编译 Agent 二进制到 agent/atagent
 	cd $(AGENT_DIR) && go build -o atagent ./cmd/atagent
 
+agent-dist: ## 编译 linux/amd64 静态 Agent 到 dist/agent/atagent（页面 curl/SSH 安装的分发产物）
+	@if command -v go >/dev/null 2>&1; then \
+		mkdir -p $(ROOT)/dist/agent && \
+		$(MAKE) -C $(AGENT_DIR) static BINARY=$(ROOT)/dist/agent/atagent; \
+	else \
+		echo "警告: 本机没有 go，跳过 dist/agent/atagent（compose 里的 agent 容器构建完会自动拷一份）" >&2; \
+	fi
+
 agent: agent-build ## 编译并起一个开发 Agent 连到 $(SERVER_ADDR)
 	mkdir -p $(AGENT_DIR)/data
 	cd $(AGENT_DIR) && ./atagent run \
@@ -71,7 +79,7 @@ local: ## 打印本地三终端启动指引
 
 ## ---- 构建与测试 ----
 
-build: build-server build-agent build-front ## 三端全量构建
+build: build-server build-agent build-front agent-dist ## 三端全量构建（含在线安装分发产物）
 
 build-server: ## 打包 Server jar（server/target/）
 	cd $(SERVER_DIR) && mvn -q -DskipTests package
@@ -88,4 +96,4 @@ test: ## 跑 Server 与 Agent 测试
 clean: ## 清理构建产物
 	cd $(SERVER_DIR) && mvn -q clean
 	rm -f $(AGENT_DIR)/atagent
-	rm -rf $(FRONT_DIR)/dist
+	rm -rf $(FRONT_DIR)/dist $(ROOT)/dist

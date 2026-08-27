@@ -10,6 +10,7 @@ import com.atest.common.Json;
 import com.atest.config.AtestProperties;
 import com.atest.domain.AgentEntity;
 import com.atest.domain.AgentEventEntity;
+import com.atest.domain.CallbackStatus;
 import com.atest.domain.DispatchEventEntity;
 import com.atest.domain.ExecutionStatus;
 import com.atest.domain.TaskEntity;
@@ -148,6 +149,12 @@ public class ViewMapper {
                 task.getStatus().wire(),
                 task.getTotalCount(),
                 task.getRerunOf(),
+                task.getRequestId(),
+                task.getCallbackUrl(),
+                task.getCallbackStatus() == null ? CallbackStatus.NONE.wire() : task.getCallbackStatus().wire(),
+                task.getCallbackAttempts(),
+                task.getCallbackLastError(),
+                task.getCallbackLastAt(),
                 counts,
                 includeExecutions ? views : null,
                 task.getCreatedAt(),

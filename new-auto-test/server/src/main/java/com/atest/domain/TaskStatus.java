@@ -8,6 +8,10 @@ public enum TaskStatus {
     FINISHED,
     CANCELED;
 
+    public boolean isTerminal() {
+        return this == FINISHED || this == CANCELED;
+    }
+
     public String wire() {
         return name().toLowerCase(Locale.ROOT);
     }

@@ -37,6 +37,7 @@ public class EventService {
     public static final String T_AGENT_STOP = "agent_stop";
     public static final String T_AGENT_RESTART = "agent_restart";
     public static final String T_AGENT_PATCH = "agent_patch";
+    public static final String T_CALLBACK = "callback";
     public static final String T_TASK_CREATED = "task_created";
     public static final String T_TASK_CANCELED = "task_canceled";
     public static final String T_TASK_RERUN = "task_rerun";

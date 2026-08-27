@@ -32,4 +32,10 @@ public class CreateTaskRequest {
     private Integer timeoutSec;
 
     private Integer priority;
+
+    /** open-API idempotency / query key: ^[A-Za-z0-9._-]{1,64}$, globally unique; ops console may omit */
+    private String requestId;
+
+    /** optional http(s) URL POSTed once when the task reaches finished / canceled */
+    private String callbackUrl;
 }

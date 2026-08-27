@@ -37,6 +37,7 @@ public class ExecutionService {
     private final EventService eventService;
     private final ExecutionSseService executionSse;
     private final AgentSseService agentSse;
+    private final CallbackService callbackService;
 
     public ExecutionService(AtestProperties props,
                             TaskExecutionRepository executionRepository,
@@ -45,7 +46,8 @@ public class ExecutionService {
                             JudgeService judgeService,
                             EventService eventService,
                             ExecutionSseService executionSse,
-                            AgentSseService agentSse) {
+                            AgentSseService agentSse,
+                            CallbackService callbackService) {
         this.props = props;
         this.executionRepository = executionRepository;
         this.taskRepository = taskRepository;
@@ -54,6 +56,7 @@ public class ExecutionService {
         this.eventService = eventService;
         this.executionSse = executionSse;
         this.agentSse = agentSse;
+        this.callbackService = callbackService;
     }
 
     @Transactional(readOnly = true)
@@ -252,6 +255,10 @@ public class ExecutionService {
             task.setStatus(next);
             task.setUpdatedAt(Instant.now());
             taskRepository.save(task);
+            // callback fires on the TASK terminal transition, never per execution
+            if (next.isTerminal()) {
+                callbackService.onTaskTerminal(taskId);
+            }
         }
     }
 

@@ -61,6 +61,19 @@ atest:
     # a connection with no frame for this long is closed
     idle-timeout-sec: 90
     request-timeout-ms: 10000
+  # curl / SSH 在线安装用的 atagent 分发目录（linux/amd64 静态编译产物）。
+  # 打包 / 编排时把二进制拷进来：cd deploy && make agent-dist（写到 <仓库根>/dist/agent/atagent）。
+  # 目录里没有时 Server 还会依次尝试 ../dist/agent/atagent、../agent/atagent（源码仓库开发布局）。
+  agent-dist:
+    dir: ./dist/agent
+  # 「SSH 代装」：Server SSH 到目标机上传 atagent + install.sh 并执行。
+  # 口令 / 私钥只在单次请求内存中使用，不落库、不打日志。
+  ssh-install:
+    connect-timeout-ms: 10000
+    auth-timeout-ms: 10000
+    exec-timeout-ms: 180000
+    output-tail-lines: 200
+    known-hosts-file: ./data/ssh-known-hosts
   concurrency:
     default-value: 1
     max-value: 4
@@ -82,10 +95,20 @@ atest:
     queue-capacity: 2000
     heartbeat-ms: 15000
     emitter-timeout-ms: 0
+  # 任务终态回调（开放 API）：任务 finished/canceled 后向 callbackUrl POST 一次结果，
+  # 2xx 算成功；失败按 1s/2s/4s/8s 退避重试，共 max-attempts 次后置 failed。
+  # 注意这只重试 HTTP 通知本身，绝不会重跑 shell 命令。
+  callback:
+    max-attempts: 5
+    backoff-base-ms: 1000
+    timeout-ms: 10000
+    sweep-interval-ms: 30000
 
 logging:
   level:
     com.atest: INFO
+    # SSH 代装的会话细节不进日志（防止把认证过程打出来），只留告警
+    org.apache.sshd: WARN
 
 ---
 spring:

@@ -50,6 +50,7 @@ public class AgentSessionService {
     private final AgentRegistry registry;
     private final AgentSseService agentSse;
     private final ViewMapper viewMapper;
+    private final TagConflictTracker tagConflictTracker;
 
     public AgentSessionService(AtestProperties props,
                                AgentRepository agentRepository,
@@ -61,7 +62,8 @@ public class AgentSessionService {
                                DispatchService dispatchService,
                                AgentRegistry registry,
                                AgentSseService agentSse,
-                               ViewMapper viewMapper) {
+                               ViewMapper viewMapper,
+                               TagConflictTracker tagConflictTracker) {
         this.props = props;
         this.agentRepository = agentRepository;
         this.agentEventRepository = agentEventRepository;
@@ -73,6 +75,7 @@ public class AgentSessionService {
         this.registry = registry;
         this.agentSse = agentSse;
         this.viewMapper = viewMapper;
+        this.tagConflictTracker = tagConflictTracker;
     }
 
     public void onRequest(AgentConnection conn, Envelope env) {
@@ -153,6 +156,7 @@ public class AgentSessionService {
             String next = DisplayTags.requireValidHello(requestedTag);
             Optional<AgentEntity> owner = agentRepository.findByDisplayTag(next);
             if (owner.isPresent() && !owner.get().getAgentId().equals(agentId)) {
+                tagConflictTracker.record(next);
                 throw new IllegalStateException("displayTag 已被占用: " + next);
             }
             agent.setDisplayTag(next);
@@ -196,6 +200,7 @@ public class AgentSessionService {
         String candidate = requestedTag == null || requestedTag.isBlank() ? agentId : DisplayTags.requireValidHello(requestedTag);
         Optional<AgentEntity> owner = agentRepository.findByDisplayTag(candidate);
         if (owner.isPresent() && !owner.get().getAgentId().equals(agentId)) {
+            tagConflictTracker.record(candidate);
             throw new IllegalStateException("displayTag 已被占用: " + candidate);
         }
         return candidate;

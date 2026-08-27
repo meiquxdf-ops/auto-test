@@ -68,6 +68,27 @@ public class TaskEntity {
     @Column(name = "rerun_of")
     private Long rerunOf;
 
+    /** caller supplied idempotency / grouping key; unique per create request, shared by a batch */
+    @Column(name = "request_id", length = 64)
+    private String requestId;
+
+    /** POST here once when the task reaches finished / canceled */
+    @Column(name = "callback_url", length = 1024)
+    private String callbackUrl;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "callback_status", length = 16, nullable = false)
+    private CallbackStatus callbackStatus = CallbackStatus.NONE;
+
+    @Column(name = "callback_attempts", nullable = false)
+    private int callbackAttempts;
+
+    @Column(name = "callback_last_error", length = 512)
+    private String callbackLastError;
+
+    @Column(name = "callback_last_at")
+    private Instant callbackLastAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

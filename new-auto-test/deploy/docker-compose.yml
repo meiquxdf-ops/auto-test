@@ -23,6 +23,9 @@ services:
     volumes:
       - ../server/target/atest-server.jar:/app/atest-server.jar:ro
       - server-data:/app/data
+      # curl/SSH 在线安装的分发目录（atest.agent-dist.dir 默认 ./dist/agent）。
+      # 宿主机 `make agent-dist` 会填充；agent 容器构建完也会自动拷一份进来。
+      - ../dist/agent:/app/dist/agent:ro
     ports:
       - "8080:8080"   # HTTP API + SSE + H2 console(/h2-console)
       - "9800:9800"   # Agent 长度前缀 TCP
@@ -58,13 +61,19 @@ services:
     container_name: atest-agent
     working_dir: /src
     # 注意：折叠块里续行必须与首行同缩进，否则 YAML 会保留换行导致命令被截断
+    # 构建产物顺手拷进 /dist-agent（宿主机 ../dist/agent），server 容器由此获得
+    # 可通过 /api/agent/binary 分发的 linux/amd64 静态二进制；先写临时名再 mv，
+    # 避免 server 撞见半个文件。
     command: >
       sh -c "apk add --no-cache bash >/dev/null &&
       CGO_ENABLED=0 go build -o /tmp/atagent ./cmd/atagent &&
+      cp /tmp/atagent /dist-agent/.atagent.tmp &&
+      mv /dist-agent/.atagent.tmp /dist-agent/atagent &&
       /tmp/atagent run -server server:9800 -tag docker-agent-01
       -data-dir /data -concurrency 1 -log-level info"
     volumes:
       - ../agent:/src
+      - ../dist/agent:/dist-agent
       - agent-data:/data
     depends_on:
       - server
