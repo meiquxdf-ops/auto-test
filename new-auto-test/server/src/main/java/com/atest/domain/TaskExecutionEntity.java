@@ -27,8 +27,8 @@ public class TaskExecutionEntity {
     @Column(name = "id")
     private Long id;
 
-    /** wire identity handed to the agent */
-    @Column(name = "execute_id", length = 64, nullable = false, updatable = false)
+    /** wire identity handed to the agent; in-place rerun mints a fresh one per attempt */
+    @Column(name = "execute_id", length = 64, nullable = false)
     private String executeId;
 
     @Column(name = "task_id", nullable = false)
