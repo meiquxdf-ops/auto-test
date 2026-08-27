@@ -286,11 +286,36 @@ export function normalizeTask(input: unknown): Task {
     []
   const executions = (rawExecs as unknown[]).map(normalizeExecution)
   const counts = emptyCounts()
-  for (const e of executions) counts[e.status] += 1
+  if (executions.length) {
+    for (const e of executions) counts[e.status] += 1
+  } else {
+    const rawCounts = pick(o, ['statusCounts', 'counts', 'status_counts'])
+    if (rawCounts && typeof rawCounts === 'object' && !Array.isArray(rawCounts)) {
+      for (const [k, v] of Object.entries(rawCounts as Dict)) {
+        const n = typeof v === 'number' ? v : Number(v)
+        if (!Number.isFinite(n) || n <= 0) continue
+        counts[normalizeExecutionStatus(k)] += n
+      }
+    }
+  }
 
-  const declared = pick(o, ['status', 'state'])
-  const fallback = normalizeExecutionStatus(declared)
-  const status = declared !== undefined ? fallback : aggregateStatus(counts, fallback)
+  const declared = String(pick(o, ['status', 'state']) ?? '').trim().toLowerCase()
+  let fallback: ExecutionStatus = 'pending'
+  if (declared === 'canceled' || declared === 'cancelled') fallback = 'canceled'
+  else if (declared === 'running') fallback = 'running'
+  else if (declared === 'dispatching' || declared === 'dispatch') fallback = 'dispatching'
+  else if (declared === 'pending' || declared === 'queued' || declared === 'waiting') fallback = 'pending'
+  else if (declared === 'finished' || declared === 'complete' || declared === 'completed' || declared === 'done') {
+    // 任务级 FINISHED 不是 execution 状态；无子执行时不能回落到 pending
+    fallback = 'pass'
+  } else if (declared) {
+    fallback = normalizeExecutionStatus(declared)
+  }
+
+  const hasCounts = Object.values(counts).some((n) => n > 0)
+  // 有子执行/计数时必须按执行结果聚合。否则 Server 的 status=finished
+  // 会被当成未知值落到 pending，队列页就会「跑完仍显示排队中」。
+  const status = hasCounts ? aggregateStatus(counts, fallback) : fallback
 
   const targets = strList(o, ['targets', 'target', 'agents', 'displayTags'])
   return {

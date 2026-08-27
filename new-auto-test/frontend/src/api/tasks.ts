@@ -13,8 +13,11 @@ export async function listTasks(query: ListTasksQuery = {}): Promise<Task[]> {
   const params: Record<string, string | number> = {}
   if (query.status) params.status = query.status
   if (query.keyword) params.keyword = query.keyword
-  if (query.limit) params.limit = query.limit
-  if (query.offset) params.offset = query.offset
+  // Server 分页参数是 page/size；limit 只是前端习惯写法
+  const size = query.limit ?? 200
+  params.size = size
+  params.limit = size
+  if (query.offset) params.page = Math.floor(query.offset / size)
   const res = await http.get('/api/tasks', { params })
   return unwrapList(res.data).map(normalizeTask)
 }

@@ -14,6 +14,7 @@ import {
 import { countExecutions } from '@/utils/aggregate'
 import { durationBetween, formatFullTime, formatTime, truncateText } from '@/utils/format'
 import { isTerminal, statusMeta } from '@/utils/status'
+import { useAgents } from '@/stores/agents'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import CopyableId from '@/components/CopyableId.vue'
@@ -22,12 +23,14 @@ import QueueReorderDrawer from '@/components/QueueReorderDrawer.vue'
 
 const router = useRouter()
 const route = useRoute()
+const { agents } = useAgents()
 
 const tasks = ref<Task[]>([])
 const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
 const statusFilter = ref<ExecutionStatus | ''>('')
+const machineFilter = ref('')
 const autoRefresh = ref(true)
 const lastLoadedAt = ref<number | null>(null)
 const acting = ref('')
@@ -56,6 +59,9 @@ onMounted(() => {
     const s = route.query.status as ExecutionStatus
     if (EXECUTION_STATUSES.includes(s)) statusFilter.value = s
   }
+  if (typeof route.query.machine === 'string' && route.query.machine) {
+    machineFilter.value = route.query.machine
+  }
   if (route.query.create === '1') createVisible.value = true
   void load()
   timer = window.setInterval(() => {
@@ -79,19 +85,43 @@ const statusTabs = computed(() => {
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
+  const machine = machineFilter.value
   return tasks.value.filter((t) => {
     if (statusFilter.value && t.status !== statusFilter.value) return false
+    if (machine && !taskTouchesMachine(t, machine)) return false
     if (!kw) return true
     return (
       t.command.toLowerCase().includes(kw) ||
       t.taskId.toLowerCase().includes(kw) ||
       (t.operator ?? '').toLowerCase().includes(kw) ||
-      t.targets.some((x) => x.toLowerCase().includes(kw))
+      t.targets.some((x) => x.toLowerCase().includes(kw)) ||
+      t.executions.some((e) => (e.displayTag || e.agentId || '').toLowerCase().includes(kw))
     )
   })
 })
 
 const pendingTasks = computed(() => tasks.value.filter((t) => t.status === 'pending'))
+
+const machineOptions = computed(() => {
+  const set = new Set<string>()
+  for (const a of agents.value) {
+    const key = a.displayTag || a.agentId
+    if (key) set.add(key)
+  }
+  for (const t of tasks.value) {
+    for (const x of t.targets) if (x) set.add(x)
+    for (const e of t.executions) {
+      const key = e.displayTag || e.agentId
+      if (key) set.add(key)
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+function taskTouchesMachine(task: Task, machine: string): boolean {
+  if (task.targets.includes(machine)) return true
+  return task.executions.some((e) => e.displayTag === machine || e.agentId === machine)
+}
 
 function pendingIndex(task: Task): number {
   return pendingTasks.value.findIndex((t) => t.taskId === task.taskId)
@@ -231,6 +261,7 @@ function segmentsOf(task: Task) {
 function clearFilters() {
   keyword.value = ''
   statusFilter.value = ''
+  machineFilter.value = ''
 }
 </script>
 
@@ -264,6 +295,15 @@ function clearFilters() {
           </el-radio-button>
         </el-radio-group>
         <span class="spacer" />
+        <el-select
+          v-model="machineFilter"
+          placeholder="按机器筛选"
+          clearable
+          filterable
+          style="width: 200px"
+        >
+          <el-option v-for="m in machineOptions" :key="m" :label="m" :value="m" />
+        </el-select>
         <el-input
           v-model="keyword"
           placeholder="搜索命令 / taskId / 目标 / 操作人"
@@ -482,7 +522,7 @@ function clearFilters() {
         v-else-if="tasks.length"
         variant="search"
         title="没有符合条件的任务"
-        desc="换个状态或关键字试试"
+        desc="换个状态、机器或关键字试试"
       >
         <el-button size="small" @click="clearFilters">清空筛选</el-button>
       </EmptyState>
