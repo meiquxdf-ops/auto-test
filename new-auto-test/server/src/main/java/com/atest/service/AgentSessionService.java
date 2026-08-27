@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import com.atest.common.DisplayTags;
 import com.atest.common.Json;
 import com.atest.config.AtestProperties;
 import com.atest.domain.AgentEntity;
@@ -123,6 +124,8 @@ public class AgentSessionService {
                 try {
                     Map<String, Object> result = acceptHello(conn, a, outcome);
                     conn.reply(env.id, result);
+                } catch (IllegalArgumentException e) {
+                    conn.replyErrorAndClose(env.id, ErrorCodes.BAD_REQUEST, e.getMessage());
                 } catch (IllegalStateException e) {
                     conn.replyErrorAndClose(env.id, ErrorCodes.TAG_CONFLICT, e.getMessage());
                 } catch (Exception e) {
@@ -147,11 +150,12 @@ public class AgentSessionService {
             agent.setCreatedAt(now);
         } else if (requestedTag != null && !requestedTag.isBlank()
                 && !requestedTag.equals(agent.getDisplayTag())) {
-            Optional<AgentEntity> owner = agentRepository.findByDisplayTag(requestedTag.trim());
+            String next = DisplayTags.requireValidHello(requestedTag);
+            Optional<AgentEntity> owner = agentRepository.findByDisplayTag(next);
             if (owner.isPresent() && !owner.get().getAgentId().equals(agentId)) {
-                throw new IllegalStateException("displayTag 已被占用: " + requestedTag);
+                throw new IllegalStateException("displayTag 已被占用: " + next);
             }
-            agent.setDisplayTag(requestedTag.trim());
+            agent.setDisplayTag(next);
         }
         agent.setStatus(AgentStatus.ONLINE);
         agent.setSessionId(conn.getSessionId());
@@ -189,7 +193,7 @@ public class AgentSessionService {
     }
 
     private String resolveNewTag(String agentId, String requestedTag) {
-        String candidate = requestedTag == null || requestedTag.isBlank() ? agentId : requestedTag.trim();
+        String candidate = requestedTag == null || requestedTag.isBlank() ? agentId : DisplayTags.requireValidHello(requestedTag);
         Optional<AgentEntity> owner = agentRepository.findByDisplayTag(candidate);
         if (owner.isPresent() && !owner.get().getAgentId().equals(agentId)) {
             throw new IllegalStateException("displayTag 已被占用: " + candidate);

@@ -67,7 +67,7 @@ const editForm = reactive({
 const tagError = computed(() => {
   const tag = editForm.displayTag.trim()
   if (!tag) return '名字不能为空'
-  if (!/^[\w.\-:@]{1,64}$/.test(tag)) return '只允许字母、数字、下划线、点、中划线、冒号、@，长度 ≤ 64'
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(tag)) return '只允许字母数字和 . _ -，长度 ≤ 64（与 install.sh --tag 相同）'
   const dup = agents.value.find((a) => a.displayTag === tag && a.agentId !== editForm.agentId)
   if (dup) return `该名字已被 ${shortId(dup.agentId)} 占用`
   return ''

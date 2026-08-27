@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import com.atest.common.ApiException;
+import com.atest.common.DisplayTags;
 import com.atest.config.AtestProperties;
 import com.atest.domain.AgentEntity;
 import com.atest.domain.ExecutionStatus;
@@ -83,6 +84,7 @@ public class AgentService {
 
         String tag = request.resolvedTag();
         if (tag != null && !tag.equals(agent.getDisplayTag())) {
+            tag = DisplayTags.requireValidHttp(tag);
             Optional<AgentEntity> owner = agentRepository.findByDisplayTag(tag);
             if (owner.isPresent() && !owner.get().getAgentId().equals(agent.getAgentId())) {
                 throw ApiException.conflict("displayTag 重名: " + tag);
