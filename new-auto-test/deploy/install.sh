@@ -359,6 +359,28 @@ render_unit() {
 render_unit
 log "systemd unit 已写入: $UNIT_FILE"
 
+# is-active 只说明进程活着。tag 重名（tag_conflict）或 9800 不通时，
+# Agent 会一直重连、服务照样 active，但机器永远不会在 机器列表 里上线。
+# 所以安装成功的标准是 atagent status 报告 connected，而不是 is-active。
+VERIFY_WAIT_SEC=20
+
+verify_registered() {
+    local i out
+    for i in $(seq 1 "$VERIFY_WAIT_SEC"); do
+        out="$("$INSTALL_BIN" status -config "$CONF_FILE" -json 2>/dev/null || true)"
+        if [[ "$out" == *'"connected": true'* || "$out" == *'"connected":true'* ]]; then
+            log "已连上 Server（${SERVER}），机器列表(#/agents)中 ${TAG} 应显示 在线"
+            return 0
+        fi
+        sleep 1
+    done
+    warn "服务在跑，但 ${VERIFY_WAIT_SEC}s 内没有连上 Server —— 机器不会出现在 机器列表，或一直显示 离线"
+    warn "先看日志: journalctl -u ${SERVICE_NAME} -n 50 --no-pager"
+    warn "  - tag_conflict（--tag 与已有机器重名）: 换一个 --tag 重跑本脚本"
+    warn "  - 连不上: nc -vz ${SERVER%:*} ${SERVER_PORT}（防火墙/安全组要放 ${SERVER_PORT}）"
+    die "注册验证失败。文件已落盘、服务会持续重试，修复原因后重跑本脚本即可"
+}
+
 if [[ "$DO_ENABLE" == "0" ]]; then
     log "按 --no-enable 跳过 enable/start"
 elif ! systemd_or_skip; then
@@ -368,7 +390,8 @@ else
     systemctl enable --now "${SERVICE_NAME}.service"
     sleep 1
     if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
-        log "服务已启动"
+        log "服务已启动，等待注册到 Server ..."
+        verify_registered
     else
         systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
         die "服务启动失败，日志: journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
@@ -388,6 +411,7 @@ cat <<EOF
   日志        : journalctl -u ${SERVICE_NAME} -f   /   ${LOG_DIR}/
 
 常用命令:
+  atagent status                   # 本机视角：connected 才是真在线
   systemctl status ${SERVICE_NAME}
   systemctl restart ${SERVICE_NAME}
   journalctl -u ${SERVICE_NAME} -n 200 --no-pager

@@ -63,8 +63,21 @@ sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 \
 5. 生成 `agent-id`：`$DATA_DIR/agent-id` 存在就沿用，不存在才生成 UUID（`/proc/sys/kernel/random/uuid` → `uuidgen` → `/dev/urandom` 兜底）。
 6. 写 `/etc/atagent/config.yaml`，旧文件备份成 `config.yaml.bak.<时间戳>`。
 7. 用 `atagent.service` 模板渲染 `/etc/systemd/system/atagent.service`，`daemon-reload` + `enable --now`，再确认 `is-active`，起不来直接打 `status` 并以非 0 退出。
+8. **等注册**：用 `atagent status -json` 轮询 `connected`（最多 20s）。`is-active` 只说明进程活着——tag 重名（`tag_conflict`）或 9800 不通时服务照样 active、一直重连，机器却永远不会在 机器列表 上线。连不上时脚本打出排查提示（journal、`nc -vz`、换 tag）并以非 0 退出；文件已落盘、服务会持续重试，修复原因后重跑脚本即可。
 
 脚本可以重复执行，重装/升级不会换掉机器身份。
+
+### 装完怎么验证
+
+脚本最后一步自己会等 Agent 连上 Server，所以**脚本成功退出就代表机器已经注册**。手工复核：
+
+```bash
+atagent status                                        # connection 一行是 connected 才是真在线
+atagent status -json | grep '"connected"'
+curl -s http://<server-host>:8080/api/agents | grep <tag>
+```
+
+再到运维台 `#/agents`（机器列表）看：新机器一行显示 **在线**、空闲 `0/1`（并发默认 1）、版本号来自本次安装的二进制。显示 离线 或压根不出现，回 [`docs/runbook.md`](../docs/runbook.md) §4。
 
 ### 落盘位置
 
