@@ -208,8 +208,10 @@ Type=simple
 ExecStart=/usr/local/bin/atagent run
 Restart=always
 RestartSec=3
-# 执行是独立进程组，KillMode=process 可避免 systemd 绕过 Agent 直接清理子进程
-KillMode=process
+# 与生产模板 deploy/atagent.service 保持一致：整个 cgroup 一起回收。
+# Agent 正常停机会自己按进程组杀执行，但若 Agent 被 SIGKILL（超时升级），
+# KillMode=process 会把在跑任务留成孤儿；control-group 兜底把它们一并收掉。
+KillMode=control-group
 TimeoutStopSec=30
 StateDirectory=atagent
 
