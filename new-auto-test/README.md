@@ -34,14 +34,14 @@ new-auto-test/
 
 ### 方式一：Docker 一键起（推荐）
 
-只需要 Docker 和 Go（Agent 跑在宿主机上，它要执行真实的 shell 命令）：
+Compose 会起 Server、前端，以及一台 tag=`docker-agent-01` 的验收 Agent（真实 bash）。
 
 ```bash
 cd new-auto-test/deploy
-make dev          # 起 Server(:8080/:9800) + 前端(:5173)，Ctrl-C 停止
+make dev          # 先打包 jar，再起 Server(:8080/:9800) + 前端(:5173) + Agent
 ```
 
-另开一个终端，接入一个开发 Agent：
+再挂一台宿主机 Agent（可选）：
 
 ```bash
 cd new-auto-test/deploy

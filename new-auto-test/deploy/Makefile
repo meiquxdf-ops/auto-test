@@ -28,7 +28,7 @@ help: ## 显示本帮助
 
 ## ---- Docker 一键开发 ----
 
-dev: ## 一键起 Server(:8080/:9800) + 前端(:5173)，Ctrl-C 停止
+dev: build-server ## 一键起 Server(:8080/:9800) + 前端(:5173) + docker-agent-01
 	$(COMPOSE) up --build
 
 down: ## 停止并移除容器

@@ -1,4 +1,4 @@
-# new-auto-test 开发编排：Server + Frontend
+# new-auto-test 开发编排：Server + Frontend + 一台验收 Agent
 #
 #   cd deploy && make dev        # 一键起（推荐）
 #   docker compose up            # 等价
@@ -6,29 +6,36 @@
 # 起来之后：
 #   - 前端     http://127.0.0.1:5173  （Vite dev server，/api 反代到 server）
 #   - HTTP API http://127.0.0.1:8080
-#   - Agent    TCP 127.0.0.1:9800（Agent 跑在宿主机上：见 `make agent`）
+#   - Agent    容器 atest-agent（tag=docker-agent-01）连 server:9800
+#              也可在宿主机 `make agent` 再挂一台
 #
-# Agent 不进容器：它要在真实测试机上执行 bash 命令，开发时直接
-# `make agent` 在宿主机跑一个连进来即可。
+# 镜像刻意不用 maven:3.9-eclipse-temurin-17：部分嵌套 overlayfs 环境
+# 解压该镜像会因 hsperfdata whiteout 报 operation not permitted。
+# Server 使用已打包的 jar（先在宿主机 `make build-server`）。
+# 若 docker pull 仍失败，把 dockerd 换成 `--storage-driver vfs` 再试。
 
 services:
   server:
-    image: maven:3.9-eclipse-temurin-17
+    image: eclipse-temurin:17-jre-jammy
     container_name: atest-server
     working_dir: /app
-    command: mvn -q spring-boot:run
+    command: java -jar /app/atest-server.jar
     volumes:
-      - ../server:/app
-      - m2-cache:/root/.m2
+      - ../server/target/atest-server.jar:/app/atest-server.jar:ro
+      - server-data:/app/data
     ports:
       - "8080:8080"   # HTTP API + SSE + H2 console(/h2-console)
       - "9800:9800"   # Agent 长度前缀 TCP
-    environment:
-      MAVEN_OPTS: -Dmaven.repo.local=/root/.m2/repository
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
 
   frontend:
-    image: node:18-bookworm
+    image: node:18-alpine
     container_name: atest-frontend
     working_dir: /app
     # vite.config.ts 里 host 是 127.0.0.1，容器内必须用 --host 0.0.0.0 覆盖
@@ -45,6 +52,24 @@ services:
       - server
     restart: unless-stopped
 
+  # 黑盒验收用的执行机：真实 bash，连 server:9800
+  agent:
+    image: golang:1.22-alpine
+    container_name: atest-agent
+    working_dir: /src
+    command: >
+      sh -c "apk add --no-cache bash >/dev/null &&
+             CGO_ENABLED=0 go build -o /tmp/atagent ./cmd/atagent &&
+             /tmp/atagent run -server server:9800 -tag docker-agent-01
+             -data-dir /data -concurrency 1 -log-level info"
+    volumes:
+      - ../agent:/src
+      - agent-data:/data
+    depends_on:
+      - server
+    restart: unless-stopped
+
 volumes:
-  m2-cache:
+  server-data:
   node-modules:
+  agent-data:
