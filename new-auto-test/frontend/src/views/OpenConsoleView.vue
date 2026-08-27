@@ -123,7 +123,7 @@ const curlCreate = computed(() => {
       <div>
         <h2 class="page-head__title">开放查询</h2>
         <p class="page-head__desc">
-          输入创建任务时携带的 requestId，查看该批任务的执行进度与回调投递状态（无需登录）
+          输入创建任务时携带（留空则由服务端生成并回显）的 requestId，查看该批任务的执行进度与回调投递状态（无需登录）
         </p>
       </div>
     </div>
@@ -255,12 +255,12 @@ const curlCreate = computed(() => {
     <div v-else class="panel oc__intro">
       <EmptyState
         title="按 requestId 查询任务"
-        desc="开放接口创建任务时必须携带全局唯一的 requestId，之后凭它在这里跟踪整批任务与回调投递"
+        desc="创建任务时携带全局唯一的 requestId（单任务留空则由服务端生成并回显），之后凭它在这里跟踪整批任务与回调投递"
       />
       <div class="oc__doc">
         <div class="oc__doc-title">接口速览（无需登录）</div>
         <ul class="oc__doc-list">
-          <li><code class="code-inline">POST /api/tasks</code> 创建单任务，body 里带 <code class="code-inline">requestId</code>（必带）与可选 <code class="code-inline">callbackUrl</code></li>
+          <li><code class="code-inline">POST /api/tasks</code> 创建单任务，body 里可带 <code class="code-inline">requestId</code>（留空由服务端生成并在响应里返回）与可选 <code class="code-inline">callbackUrl</code></li>
           <li><code class="code-inline">POST /api/tasks/batch</code> 一次建多条任务（最多 100 条），不同命令/目标共用一个 requestId；逐条部分成功——坏的 item（空命令 / 目标不存在 / 字段非法）只拒绝那一条并落在 <code class="code-inline">errors[{index,message}]</code>，其余照建；全部失败时整单 400 且 requestId 不占用，可原样重试</li>
           <li><code class="code-inline">GET /api/tasks?requestId=...</code> 查询该批全部任务与执行明细</li>
           <li>任务终态（finished / canceled）后向 callbackUrl POST 一次完整结果；2xx 算送达，失败按 1s/2s/4s/8s/16s 退避重试 5 次</li>

@@ -68,8 +68,8 @@ public class TaskEntity {
     @Column(name = "rerun_of")
     private Long rerunOf;
 
-    /** caller supplied idempotency / grouping key; unique per create request, shared by a batch */
-    @Column(name = "request_id", length = 64)
+    /** idempotency / grouping key: caller supplied or server generated, shared by a batch */
+    @Column(name = "request_id", length = 64, nullable = false)
     private String requestId;
 
     /** POST here once when the task reaches finished / canceled */

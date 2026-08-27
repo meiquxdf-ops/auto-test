@@ -65,6 +65,12 @@ class OpenApiHttpTest {
         assertThat(dup.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(dup.getBody().get("code").asText()).isEqualTo("conflict");
 
+        // the ops console / playground path: an omitted requestId comes back server-minted
+        ResponseEntity<JsonNode> minted = postJson("/api/tasks", """
+                {"command":"echo ops","targets":["http-agent"]}""");
+        assertThat(minted.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(minted.getBody().get("requestId").asText()).matches("^[A-Za-z0-9._-]{1,64}$");
+
         // partial success: the unknown-target item is rejected alone, the good one is created
         ResponseEntity<JsonNode> mixed = postJson("/api/tasks/batch", """
                 {"requestId":"http.batch-2","items":[

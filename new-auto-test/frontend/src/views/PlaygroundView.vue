@@ -167,7 +167,8 @@ async function submit() {
     })
     if (form.operator.trim()) localStorage.setItem(OPERATOR_KEY, form.operator.trim())
     saveDraft()
-    toastOk('已下发，正在等待调度')
+    // requestId 不用填：服务端自动生成并回显，凭它可去「开放查询」跟踪
+    toastOk(task?.requestId ? `已下发，requestId：${task.requestId}` : '已下发，正在等待调度')
 
     currentTask.value = task
     executions.value = task?.executions ?? []
@@ -389,6 +390,9 @@ const logFootNote = computed(() => {
               本次下发
               <span v-if="currentTask" class="hint">
                 taskId <CopyableId :value="currentTask.taskId" :head="10" />
+              </span>
+              <span v-if="currentTask?.requestId" class="hint">
+                requestId <CopyableId :value="currentTask.requestId" :head="12" />
               </span>
             </div>
             <div class="pg__result-actions">

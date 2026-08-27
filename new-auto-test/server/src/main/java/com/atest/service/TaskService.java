@@ -23,6 +23,7 @@ import com.atest.domain.TaskStatus;
 import com.atest.judge.JudgeService;
 import com.atest.repo.AgentRepository;
 import com.atest.repo.ExecutionLogRepository;
+import com.atest.repo.OpenRequestRepository;
 import com.atest.repo.TaskExecutionRepository;
 import com.atest.repo.TaskRepository;
 import com.atest.web.dto.BatchCreateTaskRequest;
@@ -31,6 +32,7 @@ import com.atest.web.dto.RerunRequest;
 import com.atest.web.dto.TaskView;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +49,7 @@ public class TaskService {
     private final TaskExecutionRepository executionRepository;
     private final ExecutionLogRepository logRepository;
     private final AgentRepository agentRepository;
+    private final OpenRequestRepository openRequestRepository;
     private final JudgeService judgeService;
     private final ExecutionService executionService;
     private final DispatchService dispatchService;
@@ -58,6 +61,7 @@ public class TaskService {
                        TaskExecutionRepository executionRepository,
                        ExecutionLogRepository logRepository,
                        AgentRepository agentRepository,
+                       OpenRequestRepository openRequestRepository,
                        JudgeService judgeService,
                        ExecutionService executionService,
                        DispatchService dispatchService,
@@ -68,6 +72,7 @@ public class TaskService {
         this.executionRepository = executionRepository;
         this.logRepository = logRepository;
         this.agentRepository = agentRepository;
+        this.openRequestRepository = openRequestRepository;
         this.judgeService = judgeService;
         this.executionService = executionService;
         this.dispatchService = dispatchService;
@@ -88,6 +93,13 @@ public class TaskService {
         PreparedTask prepared = prepareTask(request.getName(), request.getCommand(), request.getCwd(),
                 request.getEnv(), request.getTargets(), request.getConditionConfig(), request.getOperator(),
                 request.getTimeoutSec(), request.getPriority(), null);
+        // the ops console / playground never has to type one: a blank requestId is minted here
+        // and returned on the TaskView, so the caller can still query / correlate by it
+        if (requestId == null) {
+            requestId = claimGeneratedRequestId("auto");
+        } else {
+            claimRequestId(requestId, "single");
+        }
         return persistTask(prepared, requestId, callbackUrl, Instant.now());
     }
 
@@ -135,6 +147,7 @@ public class TaskService {
                     .withExtra("requestId", requestId)
                     .withExtra("errors", errors);
         }
+        claimRequestId(requestId, "batch");
         Instant now = Instant.now();
         List<TaskView> tasks = new ArrayList<>(prepared.size());
         for (PreparedTask p : prepared) {
@@ -221,7 +234,7 @@ public class TaskService {
         return viewMapper.toTaskView(task, executions, true);
     }
 
-    /** trim + charset check + global uniqueness; blank is only legal for the ops console. */
+    /** trim + charset check + global uniqueness; blank means "mint one for me" (batch excepted). */
     private String normalizeRequestId(String requestId, boolean required) {
         String v = requestId == null ? "" : requestId.trim();
         if (v.isEmpty()) {
@@ -233,10 +246,33 @@ public class TaskService {
         if (!REQUEST_ID_PATTERN.matcher(v).matches()) {
             throw ApiException.badRequest("requestId 只允许字母、数字和 . _ -，长度 1-64: " + v);
         }
-        if (taskRepository.existsByRequestId(v)) {
+        if (openRequestRepository.existsById(v)) {
             throw ApiException.conflict("requestId 已存在: " + v);
         }
         return v;
+    }
+
+    /**
+     * Consumes a requestId inside the creating transaction. The registry's primary key is the
+     * real uniqueness guarantee: when two calls race past the exists-check, the second INSERT
+     * dies on the constraint and still surfaces as the documented 409.
+     */
+    private void claimRequestId(String requestId, String source) {
+        try {
+            openRequestRepository.claim(requestId, source, Instant.now());
+        } catch (DataIntegrityViolationException e) {
+            throw ApiException.conflict("requestId 已存在: " + requestId);
+        }
+    }
+
+    /** A server-minted key: a UUID (hyphens are inside the allowed charset, 36 <= 64 chars). */
+    private String claimGeneratedRequestId(String source) {
+        String candidate = UUID.randomUUID().toString();
+        while (openRequestRepository.existsById(candidate)) {
+            candidate = UUID.randomUUID().toString();
+        }
+        claimRequestId(candidate, source);
+        return candidate;
     }
 
     private String normalizeCallbackUrl(String callbackUrl) {
@@ -508,6 +544,8 @@ public class TaskService {
         task.setStatus(TaskStatus.PENDING);
         task.setTotalCount(selected.size());
         task.setRerunOf(source.getId());
+        // a fresh key, never the source's: requestId groups one create call, not a task lineage
+        task.setRequestId(claimGeneratedRequestId("rerun"));
         task.setCreatedAt(now);
         task.setUpdatedAt(now);
         taskRepository.save(task);

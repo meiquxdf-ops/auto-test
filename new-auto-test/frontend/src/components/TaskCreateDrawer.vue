@@ -164,7 +164,12 @@ async function submit() {
     })
     if (form.operator.trim()) localStorage.setItem(OPERATOR_KEY, form.operator.trim())
     saveDraft()
-    toastOk(`任务已创建，共 ${form.targets.length} 个目标`)
+    // requestId 留空时由服务端生成，创建完回显出来方便开放查询 / 回调对账
+    toastOk(
+      task?.requestId
+        ? `任务已创建，共 ${form.targets.length} 个目标 · requestId：${task.requestId}`
+        : `任务已创建，共 ${form.targets.length} 个目标`,
+    )
     visible.value = false
     emit('created', task)
   } catch (e) {
@@ -299,12 +304,12 @@ const timeoutPresets = [
               <template #label>
                 <span class="lbl">
                   requestId
-                  <span class="lbl__hint">开放调用的查询键，全局唯一，运维台可留空</span>
+                  <span class="lbl__hint">开放调用的查询键，全局唯一，留空自动生成</span>
                 </span>
               </template>
               <el-input
                 v-model="form.requestId"
-                placeholder="选填，^[A-Za-z0-9._-]{1,64}$"
+                placeholder="留空自动生成，^[A-Za-z0-9._-]{1,64}$"
                 spellcheck="false"
                 class="mono"
                 clearable
