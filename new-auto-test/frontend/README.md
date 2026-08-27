@@ -23,7 +23,7 @@ npm run build   # 类型检查 + 产物输出到 dist/
 |---|---|---|
 | `#/dashboard` | 总览 | 在线机器数、运行中执行、失败/阻塞/异常、排队数、并发水位、正在执行、需要关注、最近任务、状态分布、近期事件 |
 | `#/agents` | 机器 | 状态灯（在线/忙碌/失联/离线）、改 tag、空闲时改并发 1-4、重启 Agent、停止当前任务、点机器名看时间线 |
-| `#/tasks` | 任务队列 | 状态筛选、创建任务抽屉、pending 拖拽/上下按钮排序、取消、原地重跑、重跑为新记录、展开看执行明细 |
+| `#/tasks` | 任务队列 | 状态筛选、**按机器筛选**、创建任务、pending 调序、取消、原地重跑、重跑为新记录；任务状态按子执行聚合（pass/fail/block，不会把 finished 显示成排队中） |
 | `#/executions/:executeId` | 执行详情 | 元数据、结果徽章、实时日志终端、5MB 截断横幅 |
 | `#/timeline` | 时间线 | 按 executeId / agentId 查询，agent 左、server 右，展示 token / session / bootId |
 | `#/playground` | 测试下发 | 选机器 + 填命令 + 可选 condition，一键下发，右侧立刻跟状态和日志 |
