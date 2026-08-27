@@ -83,4 +83,25 @@ public interface TaskExecutionRepository extends JpaRepository<TaskExecutionEnti
             + "e.subStatus = null, e.updatedAt = :now "
             + "where e.id = :id and e.status = com.atest.domain.ExecutionStatus.DISPATCHING and e.dispatchToken = :token")
     int casRelease(@Param("id") Long id, @Param("token") String token, @Param("now") Instant now);
+
+    /**
+     * Flags a cancel request on a still-live row only. The caller's entity snapshot may be stale
+     * (a racing fin can finalize the row between load and here), so the flag must be a targeted
+     * conditional UPDATE: an entity save would write the whole stale row and resurrect a terminal
+     * execution back to running.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("update TaskExecutionEntity e set e.cancelRequested = true, e.updatedAt = :now "
+            + "where e.id = :id and e.status in (com.atest.domain.ExecutionStatus.PENDING, "
+            + "com.atest.domain.ExecutionStatus.DISPATCHING, com.atest.domain.ExecutionStatus.RUNNING)")
+    int casMarkCancelRequested(@Param("id") Long id, @Param("now") Instant now);
+
+    /** Same contract as {@link #casMarkCancelRequested} for the watchdog timeout flag. */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("update TaskExecutionEntity e set e.timeoutRequested = true, e.updatedAt = :now "
+            + "where e.id = :id and e.status in (com.atest.domain.ExecutionStatus.PENDING, "
+            + "com.atest.domain.ExecutionStatus.DISPATCHING, com.atest.domain.ExecutionStatus.RUNNING)")
+    int casMarkTimeoutRequested(@Param("id") Long id, @Param("now") Instant now);
 }

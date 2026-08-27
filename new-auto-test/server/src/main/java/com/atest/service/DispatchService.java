@@ -207,10 +207,13 @@ public class DispatchService {
             executionService.finish(exec, ExecutionStatus.CANCELED, reason + " (未被受理)", null);
             return true;
         }
-        if (userInitiated) {
-            executionService.markCancelRequested(exec);
-        } else {
-            executionService.markTimeoutRequested(exec);
+        boolean marked = userInitiated
+                ? executionService.markCancelRequested(exec)
+                : executionService.markTimeoutRequested(exec);
+        if (!marked) {
+            // the row went terminal after our snapshot was loaded (fin / reaper / another cancel
+            // racer won): there is nothing left to cancel and no cancel frame to send
+            return false;
         }
         AgentConnection conn = registry.get(exec.getAgentId()).orElse(null);
         if (conn == null) {

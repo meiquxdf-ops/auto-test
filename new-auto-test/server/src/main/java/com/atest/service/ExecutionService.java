@@ -223,23 +223,30 @@ public class ExecutionService {
         return exec;
     }
 
-    /** Marks a cancel request; the terminal state still arrives with fin unless the agent is gone. */
+    /**
+     * Marks a cancel request; the terminal state still arrives with fin unless the agent is gone.
+     * Returns false when the row is already terminal: the caller's snapshot raced a fin, and the
+     * flag must never be written through that stale copy (a full-row save would flip the finished
+     * execution back to running and null out finishedAt).
+     */
     @Transactional
-    public void markCancelRequested(TaskExecutionEntity exec) {
-        exec.setCancelRequested(true);
-        exec.setUpdatedAt(Instant.now());
-        executionRepository.save(exec);
-        publishExecution(exec);
+    public boolean markCancelRequested(TaskExecutionEntity exec) {
+        if (executionRepository.casMarkCancelRequested(exec.getId(), Instant.now()) != 1) {
+            return false;
+        }
+        executionRepository.findById(exec.getId()).ifPresent(this::publishExecution);
+        return true;
     }
 
     @Transactional
-    public void markTimeoutRequested(TaskExecutionEntity exec) {
-        exec.setTimeoutRequested(true);
-        exec.setUpdatedAt(Instant.now());
-        executionRepository.save(exec);
+    public boolean markTimeoutRequested(TaskExecutionEntity exec) {
+        if (executionRepository.casMarkTimeoutRequested(exec.getId(), Instant.now()) != 1) {
+            return false;
+        }
         eventService.record(EventService.T_TIMEOUT, exec.getAgentId(), exec.getExecuteId(), exec.getTaskId(),
                 "超过 timeoutSec，请求 agent 杀进程组");
-        publishExecution(exec);
+        executionRepository.findById(exec.getId()).ifPresent(this::publishExecution);
+        return true;
     }
 
     /** Recomputes the parent task status from its executions. */
