@@ -9,6 +9,8 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=@DATA_DIR@
+# 二进制读 ATEST_CONFIG；ATAGENT_CONFIG 仅作兼容别名，真正生效的是 --config
+Environment=ATEST_CONFIG=@CONFIG@
 Environment=ATAGENT_CONFIG=@CONFIG@
 ExecStart=@BIN@ --config @CONFIG@
 

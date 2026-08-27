@@ -400,6 +400,7 @@ function rowClass({ row }: { row: Agent }) {
               type="danger"
               :loading="acting === `restart:${row.agentId}`"
               :disabled="row.status === 'offline'"
+              :title="row.status === 'offline' ? '离线无法远程重启。新机器请在目标机上跑 deploy/install.sh，不要点这里。' : ''"
               @click="onRestart(row)"
             >
               重启 Agent

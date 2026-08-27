@@ -15,9 +15,11 @@
 - Agent 以 **root 运行**：被测脚本要装包、改系统、读别人家目录，跑在受限用户下会莫名其妙失败。unit 里没有加任何沙箱选项，就是这个原因。
 - 只走内网。脚本**不依赖任何公网地址**，没有 `curl … | sh` 那种写法：二进制要么用 `--bin` 指本地文件，要么用 `--url` 指内网自己的文件服务。
 
+运维台「机器列表」**不能安装** Agent：那一页只展示已经 `hello` 过的身份。「重启 Agent」只对**在线**会话下发 `stop`，让本机 systemd 再拉起；离线行（例如误注册留下的 `stale-docker-agent-01`）点了会返回「agent 当前离线，无法重启」，也不会在任何物理机上装出新进程。
+
 ## 装 Agent
 
-把 `deploy/` 整个目录（`install.sh` + `atagent.service`）和编译好的 `atagent` 拷到目标机，然后：
+把 `deploy/` 整个目录（`install.sh` + `atagent.service`）和编译好的 `atagent` 拷到**目标 Linux 测试机**（需要 root + systemd），然后：
 
 ```bash
 sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01
@@ -97,9 +99,9 @@ log_level: "info"
 
 ### 对 `atagent` 二进制的约定
 
-unit 里是 `atagent --config /etc/atagent/config.yaml`，同时也导出了 `ATAGENT_CONFIG` 环境变量，二进制满足其一即可：
+unit 里是 `atagent --config /etc/atagent/config.yaml`，并导出 `ATEST_CONFIG`（Agent 实际读取的环境变量）：
 
-- 接受 `--config <path>`，或在没有该参数时读 `ATAGENT_CONFIG`；
+- 接受 `--config <path>`（Go flag，`-config` 等价），或在没有该参数时读 `ATEST_CONFIG`；
 - 配置字段名与上面那份 `config.yaml` 一致；
 - `agent_id_file` 里的 UUID 就是 `agentId`，Agent 只读不写（安装脚本负责生成）；
 - 收到 `SIGTERM` 时优雅退出。父进程被 systemd 以 `control-group` 方式回收，任务派生的子进程会一起被清掉，所以 Agent 自己不用兜底杀子进程树；
