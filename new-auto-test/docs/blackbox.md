@@ -99,4 +99,5 @@ failed to convert whiteout file "tmp/hsperfdata_root/.wh.69": operation not perm
 ```
 
 规避：compose 已改为 `eclipse-temurin:17-jre-jammy` + 预编译 jar + alpine 前端/Agent。
-仍失败时：`dockerd --storage-driver vfs` 后重拉。
+仍失败时：`dockerd` 用 vfs（关掉 containerd-snapshotter）。容器能起但 `npm`/`apk` 无网时，把 **iptables-legacy FORWARD** 改成 ACCEPT（见 `docs/runbook.md` §11）。
+`command: >` 续行缩进多了会把 `-data-dir` 拆成下一条命令，表现为 `tag_conflict`；已在 compose 里对齐缩进。

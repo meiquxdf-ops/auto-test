@@ -214,3 +214,14 @@ JDBC URL `jdbc:h2:file:./data/atest`，用户 `sa`，空密码。
 - Agent 升级会杀掉在跑任务（systemd `KillMode=control-group`），机器空闲时再升，见
   [`deploy/README.md`](../deploy/README.md)。
 - 生产安装、systemd、卸载等运维操作全部见 [`deploy/README.md`](../deploy/README.md)。
+
+## 11. `docker compose` 在嵌套/沙箱环境起不来
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| pull 时报 `failed to convert whiteout file ... operation not permitted` | dockerd 走 containerd overlayfs snapshotter，沙箱里 `mknod` 被拒 | `/etc/docker/daemon.json` 设 `"storage-driver": "vfs"` 且 `"features": {"containerd-snapshotter": false}`，只重启本任务的 dockerd |
+| 容器内 `npm install` / `apk` / `go` 一直挂、宿主机出网正常 | 旧 dockerd 留下的 **iptables-legacy** FORWARD 默认 DROP，新 dockerd 已改 nftables，compose 网桥流量被 legacy 表丢掉 | `iptables-legacy -P FORWARD ACCEPT`（过滤仍由当前 dockerd 的 nft 规则负责） |
+| Agent 日志 `sh: -data-dir: not found` | compose 里 `command: >` 续行缩进多了，YAML 保留换行，shell 把参数拆成下一条命令 | 续行与 `sh -c` 同行同缩进，见 `deploy/docker-compose.yml` 注释 |
+| 新 Agent 被拒 `tag_conflict` | 之前一次失败启动用同一 displayTag 注册过、data-dir 又没持久化 | `PATCH /api/agents/{id}` 把旧记录改成别的 tag，或清开发库 |
+
+本仓库 compose 的 Server 镜像是 `eclipse-temurin:17-jre-jammy` + 预编译 jar，避免再拉带 hsperfdata whiteout 的 Maven 镜像。
