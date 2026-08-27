@@ -138,7 +138,7 @@ onMounted(() => {
   window.addEventListener('resize', syncViewport, { passive: true })
   if (idValid.value) void query()
   timer = window.setInterval(() => {
-    if (!autoRefresh.value || !queriedId.value || !hasActive.value) return
+    if (!autoRefresh.value || !queriedId.value || !needsRefresh.value) return
     if (document.visibilityState !== 'visible') return
     void query(true)
   }, 5000)
@@ -174,6 +174,12 @@ const taskCounts = computed(() => {
 })
 
 const hasActive = computed(() => tasks.value.some((t) => !isTerminal(t.status)))
+
+/** 终态后回调仍会 PENDING→RUNNING→SUCCESS/FAILED，不能跟 hasActive 绑在一起（否则会把已结束批次显示成进行中） */
+const hasCallbackInFlight = computed(() =>
+  tasks.value.some((t) => t.callbackStatus === 'pending' || t.callbackStatus === 'running'),
+)
+const needsRefresh = computed(() => hasActive.value || hasCallbackInFlight.value)
 
 /** 进度按「到达终态的任务数 / 总数」算，运行中不计 */
 const terminalCount = computed(() => tasks.value.filter((t) => isTerminal(t.status)).length)
@@ -757,7 +763,7 @@ async function copySnippet() {
             <CopyableId :value="queriedId" :head="18" />
           </span>
           <span v-if="lastLoadedAt" class="oc__stamp">{{ formatTime(lastLoadedAt) }} 更新</span>
-          <el-tooltip content="有未完成任务时每 5 秒自动刷新" placement="top" popper-class="oc-pop">
+          <el-tooltip content="任务未结束或回调还在投递时，每 5 秒自动刷新" placement="top" popper-class="oc-pop">
             <el-switch v-model="autoRefresh" size="small" active-text="自动刷新" />
           </el-tooltip>
         </div>
