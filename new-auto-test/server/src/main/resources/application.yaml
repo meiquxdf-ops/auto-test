@@ -1,0 +1,102 @@
+server:
+  port: 8080
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 200
+
+spring:
+  application:
+    name: atest-server
+  # Default profile runs on an embedded H2 file database so the server boots
+  # without MySQL. Switch to MySQL with --spring.profiles.active=mysql
+  datasource:
+    url: jdbc:h2:file:./data/atest;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 20
+      pool-name: atest-pool
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 200
+        order_inserts: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration/{vendor}
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  mvc:
+    async:
+      request-timeout: -1
+  jackson:
+    # keep nulls in REST payloads so the UI always sees the same field set
+    default-property-inclusion: always
+    serialization:
+      write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+atest:
+  agent:
+    port: 9800
+    bind-address: 0.0.0.0
+    # single TCP frame hard limit (protocol: <= 1MiB)
+    max-frame-bytes: 1048576
+    # dup_session arbitration: ping the incumbent connection and wait this long
+    dup-session-ping-timeout-ms: 5000
+    # a connection with no frame for this long is closed
+    idle-timeout-sec: 90
+    request-timeout-ms: 10000
+  concurrency:
+    default-value: 1
+    max-value: 4
+  logs:
+    # per-execution tail cap, older lines are dropped and truncated=true is reported
+    max-bytes-per-execution: 5242880
+    trim-batch-size: 500
+    max-page-size: 5000
+  dispatch:
+    interval-ms: 1000
+    lease-sec: 45
+    reconcile-interval-ms: 5000
+    # extra grace before the server kills an execution that blew its timeoutSec
+    timeout-grace-sec: 15
+    # a disconnected (running) execution becomes exception after this long, 0 disables
+    disconnected-timeout-sec: 3600
+    default-timeout-sec: 3600
+  sse:
+    queue-capacity: 2000
+    heartbeat-ms: 15000
+    emitter-timeout-ms: 0
+
+logging:
+  level:
+    com.atest: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mysql
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/atest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  h2:
+    console:
+      enabled: false

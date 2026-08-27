@@ -1,0 +1,62 @@
+package com.atest.common;
+
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Map<String, Object>> handleApi(ApiException e, HttpServletRequest req) {
+        return build(e.getStatus(), e.getCode(), e.getMessage(), req);
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException e,
+                                                                HttpServletRequest req) {
+        String msg = e.getBindingResult().getFieldErrors().stream()
+                .map(f -> f.getField() + " " + f.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        return build(HttpStatus.BAD_REQUEST, "bad_request", msg.isEmpty() ? e.getMessage() : msg, req);
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegal(IllegalArgumentException e, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "bad_request", e.getMessage(), req);
+    }
+
+    /** A client closing an SSE stream is normal; there is no usable response left to write into. */
+    @ExceptionHandler({AsyncRequestNotUsableException.class, IOException.class})
+    public ResponseEntity<Void> handleClientAbort(Exception e, HttpServletRequest req) {
+        log.debug("client aborted {} {}: {}", req.getMethod(), req.getRequestURI(), e.toString());
+        return ResponseEntity.ok().build();
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleOther(Exception e, HttpServletRequest req) {
+        log.error("unhandled error on {} {}", req.getMethod(), req.getRequestURI(), e);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", String.valueOf(e.getMessage()), req);
+    }
+
+    private ResponseEntity<Map<String, Object>> build(HttpStatus status, String code, String message,
+                                                      HttpServletRequest req) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", code);
+        body.put("message", message);
+        body.put("path", req.getRequestURI());
+        body.put("status", status.value());
+        return ResponseEntity.status(status).body(body);
+    }
+}
