@@ -1,0 +1,312 @@
+:root {
+  --nat-bg: #f2f4f8;
+  --nat-panel: #ffffff;
+  --nat-border: #e3e7ee;
+  --nat-border-strong: #d3d9e4;
+  --nat-text: #1f2733;
+  --nat-text-sub: #5b6676;
+  --nat-text-weak: #8c97a8;
+  --nat-nav-bg: #16202f;
+  --nat-nav-bg-soft: #1e2b3d;
+  --nat-nav-text: #b6c2d3;
+  --nat-nav-active: #4c9aff;
+  --nat-accent: #2563eb;
+  --nat-radius: 10px;
+  --nat-shadow: 0 1px 2px rgba(17, 24, 39, 0.04), 0 4px 14px rgba(17, 24, 39, 0.05);
+
+  --el-color-primary: #2563eb;
+  --el-border-radius-base: 8px;
+  --el-font-size-base: 13px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--nat-bg);
+  color: var(--nat-text);
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.boot-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #8c97a8;
+  font-size: 14px;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ------------------------------------------------------------- 通用容器 */
+
+.page {
+  padding: 18px 22px 32px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.page-head__title {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  margin: 0 0 4px;
+}
+
+.page-head__desc {
+  color: var(--nat-text-sub);
+  font-size: 12.5px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.page-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.panel {
+  background: var(--nat-panel);
+  border: 1px solid var(--nat-border);
+  border-radius: var(--nat-radius);
+  box-shadow: var(--nat-shadow);
+}
+
+.panel + .panel {
+  margin-top: 14px;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nat-border);
+  flex-wrap: wrap;
+}
+
+.panel__title {
+  font-size: 14px;
+  font-weight: 620;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel__title .hint {
+  font-weight: 400;
+  color: var(--nat-text-weak);
+  font-size: 12px;
+}
+
+.panel__body {
+  padding: 14px 16px;
+}
+
+.panel__body--flush {
+  padding: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nat-border);
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+}
+
+.muted {
+  color: var(--nat-text-weak);
+}
+
+.sub {
+  color: var(--nat-text-sub);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-btn {
+  color: var(--nat-accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------- 状态徽章 */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.status-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.status-pill--lg {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 14px;
+}
+
+.pulse {
+  animation: nat-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes nat-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+
+/* ------------------------------------------------------------- KV 列表 */
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 14px;
+  align-items: baseline;
+}
+
+.kv__k {
+  color: var(--nat-text-weak);
+  font-size: 12.5px;
+}
+
+.kv__v {
+  color: var(--nat-text);
+  word-break: break-all;
+}
+
+.code-inline {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  background: #eef1f6;
+  border: 1px solid var(--nat-border);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: #26303d;
+}
+
+/* ------------------------------------------------------------- 表格微调 */
+
+.el-table {
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  background: #f7f9fc !important;
+  color: var(--nat-text-sub);
+  font-weight: 600;
+}
+
+.el-table .cell {
+  line-height: 1.55;
+}
+
+.row-dragging {
+  background: #eef4ff !important;
+}
+
+/* ------------------------------------------------------------- 滚动条 */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 132, 150, 0.35);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 132, 150, 0.6);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------- 动画 */
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
