@@ -200,18 +200,18 @@ const timeoutPresets = [
 <template>
   <el-drawer
     v-model="visible"
-    size="740px"
+    size="min(740px, 100vw)"
     :with-header="false"
     :close-on-click-modal="false"
     :before-close="onClose"
   >
     <div class="cd">
       <div class="cd__head">
-        <div>
+        <div class="cd__head-text">
           <div class="cd__title">创建任务</div>
-          <div class="cd__sub">命令通过 <code class="code-inline">bash -c</code> 在目标机器上执行，一机一任务（可配并发上限 4）</div>
+          <div class="cd__sub">通过 <code class="code-inline">bash -c</code> 在目标机执行，一机一任务</div>
         </div>
-        <el-button text :icon="'Close'" @click="onClose" />
+        <el-button text :icon="'Close'" title="关闭" @click="onClose" />
       </div>
 
       <div class="cd__body">
@@ -220,7 +220,7 @@ const timeoutPresets = [
             <template #label>
               <span class="lbl">
                 命令 <b class="req">*</b>
-                <span class="lbl__hint">支持多行脚本，{{ commandLines }} 行</span>
+                <span class="lbl__hint">多行脚本，{{ commandLines }} 行</span>
               </span>
             </template>
             <el-input
@@ -235,16 +235,16 @@ const timeoutPresets = [
 
           <div class="cd__grid">
             <el-form-item label="工作目录 cwd">
-              <el-input v-model="form.cwd" placeholder="留空则用 Agent 默认目录" spellcheck="false" class="mono" />
+              <el-input v-model="form.cwd" placeholder="留空用 Agent 默认目录" spellcheck="false" class="mono" />
             </el-form-item>
             <el-form-item label="操作人 operator">
-              <el-input v-model="form.operator" placeholder="选填，用于追溯" spellcheck="false" />
+              <el-input v-model="form.operator" placeholder="选填，便于追溯" spellcheck="false" />
             </el-form-item>
           </div>
 
           <el-form-item :error="timeoutError || undefined">
             <template #label>
-              <span class="lbl">超时时间 <span class="lbl__hint">超时会杀掉进程组并判为 exception</span></span>
+              <span class="lbl">超时时间 <span class="lbl__hint">超时杀进程组，判 exception</span></span>
             </template>
             <div class="cd__timeout">
               <el-input-number v-model="form.timeoutSec" :min="1" :max="86400" :step="60" controls-position="right" />
@@ -274,9 +274,9 @@ const timeoutPresets = [
 
           <el-form-item :error="callbackUrlError || undefined">
             <template #label>
-              <span class="lbl">
-                回调地址 callbackUrl
-                <span class="lbl__hint">任务终态后 POST 一次结果，2xx 算送达；requestId 由服务端自动生成，创建后回显</span>
+              <span class="lbl lbl--stack">
+                <span>回调地址 callbackUrl</span>
+                <span class="lbl__hint">任务终态后 POST 一次结果，2xx 算送达</span>
               </span>
             </template>
             <el-input
@@ -286,40 +286,54 @@ const timeoutPresets = [
               class="mono"
               clearable
             />
+            <div class="cd__extra">requestId 由服务端生成，创建后回显。</div>
           </el-form-item>
         </el-form>
       </div>
 
       <div class="cd__foot">
-        <el-button text @click="resetForm">重置表单</el-button>
-        <span class="spacer" />
+        <el-button text @click="resetForm">重置</el-button>
         <span class="muted cd__summary">
-          {{ form.targets.length }} 台目标 · 超时 {{ form.timeoutSec }}s ·
-          {{ form.conditionConfig ? `${form.conditionConfig.rules.length} 条判定规则` : '按退出码判定' }}
+          {{ form.targets.length }} 台 · {{ form.timeoutSec }}s ·
+          {{ form.conditionConfig ? `${form.conditionConfig.rules.length} 条规则` : '按退出码' }}
         </span>
-        <el-button @click="onClose">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="!valid" @click="submit">
-          创建并入队
-        </el-button>
+        <span class="spacer" />
+        <div class="cd__foot-actions">
+          <el-button @click="onClose">取消</el-button>
+          <el-button type="primary" :loading="submitting" :disabled="!valid" @click="submit">
+            创建并入队
+          </el-button>
+        </div>
       </div>
     </div>
   </el-drawer>
 </template>
 
 <style scoped>
+/*
+ * 抽屉正文自带 20px 内边距。负边距把它顶掉的同时，高度也要补回来，
+ * 否则 height:100% 会比可用高度矮 40px，页脚底下留一条白边。
+ */
 .cd {
+  --cd-pad: var(--el-drawer-padding-primary, 20px);
+
   display: flex;
   flex-direction: column;
-  height: 100%;
-  margin: -20px;
+  height: calc(100% + var(--cd-pad) * 2);
+  margin: calc(var(--cd-pad) * -1);
 }
 
 .cd__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--nat-border);
+}
+
+.cd__head-text {
+  min-width: 0;
 }
 
 .cd__title {
@@ -330,35 +344,59 @@ const timeoutPresets = [
 .cd__sub {
   color: var(--nat-text-weak);
   font-size: 12px;
+  line-height: 1.45;
   margin-top: 4px;
 }
 
 .cd__body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 20px 20px;
 }
 
 .cd__grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0 14px;
 }
 
+.cd__extra {
+  flex: 1 1 100%;
+  color: var(--nat-text-weak);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
 .cd__timeout {
+  flex: 1 1 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   flex-wrap: wrap;
 }
 
 .cd__foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
+  flex-wrap: wrap;
   padding: 12px 20px;
   border-top: 1px solid var(--nat-border);
   background: #fbfcfe;
+}
+
+.cd__foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.cd__foot-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .spacer {
@@ -367,29 +405,45 @@ const timeoutPresets = [
 
 .cd__summary {
   font-size: 12px;
-  margin-right: 6px;
+  line-height: 1.45;
 }
 
 .lbl {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  line-height: 1.45;
+}
+
+/* 提示放到标签下一行，别和标签焊在同一条 flex 线上 */
+.lbl--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .lbl__hint {
   color: var(--nat-text-weak);
   font-weight: 400;
   font-size: 12px;
-}
-
-.req {
-  color: #dc2626;
+  line-height: 1.45;
 }
 
 :deep(.el-form-item__label) {
   font-weight: 560;
   color: var(--nat-text);
   padding-bottom: 4px;
+  height: auto;
+  line-height: 1.45;
+}
+
+:deep(.el-form-item__content) {
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.req {
+  color: #dc2626;
 }
 
 :deep(textarea.el-textarea__inner) {

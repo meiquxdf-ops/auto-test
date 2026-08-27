@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { cancelTask, createTask, fetchTaskById } from '@/api/tasks'
 import { toastError, toastOk } from '@/api/http'
@@ -17,10 +16,12 @@ import EnvEditor from '@/components/EnvEditor.vue'
 import LogTerminal from '@/components/LogTerminal.vue'
 import StatusPill from '@/components/StatusPill.vue'
 
-const router = useRouter()
-
 const DRAFT_KEY = 'nat.playgroundDraft'
 const OPERATOR_KEY = 'nat.operator'
+/** 和样式里的两栏断点保持一致：窄屏单栏时才需要滚到结果区 */
+const ONE_COL_QUERY = '(max-width: 1320px)'
+/** 目标机器超过这个数量就折叠，避免机器芯片把日志挤下去 */
+const TARGET_PREVIEW = 8
 
 interface FormState {
   command: string
@@ -62,6 +63,10 @@ const executions = ref<Execution[]>([])
 const selectedId = ref('')
 const waiting = ref(false)
 const history = ref<{ taskId: string; command: string; at: number; executeIds: string[] }[]>([])
+const showAllTargets = ref(false)
+const advancedOpen = ref<string[]>([])
+const resultRef = ref<HTMLElement | null>(null)
+const advancedRef = ref<HTMLElement | null>(null)
 
 const {
   execution,
@@ -86,6 +91,14 @@ const callbackUrlError = computed(() => {
 const valid = computed(
   () => form.command.trim().length > 0 && form.targets.length > 0 && !callbackUrlError.value,
 )
+
+const envCount = computed(() => Object.keys(form.env).length)
+const ruleCount = computed(() => form.conditionConfig?.rules.length ?? 0)
+
+const visibleExecutions = computed(() =>
+  showAllTargets.value ? executions.value : executions.value.slice(0, TARGET_PREVIEW),
+)
+const hiddenTargetCount = computed(() => executions.value.length - visibleExecutions.value.length)
 
 const quickCommands = [
   { label: '主机信息', value: 'hostname && uname -a && uptime' },
@@ -140,6 +153,22 @@ async function waitForExecutions(taskId: string) {
   }
 }
 
+function scrollTo(el: HTMLElement | null) {
+  if (!el) return
+  void nextTick(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
+/** 单栏时表单在上、结果在下，下发后把结果区带到视野里 */
+function revealResult() {
+  if (!window.matchMedia(ONE_COL_QUERY).matches) return
+  scrollTo(resultRef.value)
+}
+
+function openAdvanced() {
+  if (!advancedOpen.value.length) advancedOpen.value = ['env']
+  scrollTo(advancedRef.value)
+}
+
 async function submit() {
   if (!valid.value) return
   if (form.targets.length > 5) {
@@ -173,6 +202,8 @@ async function submit() {
     currentTask.value = task
     executions.value = task?.executions ?? []
     selectedId.value = task?.executions?.[0]?.executeId ?? ''
+    showAllTargets.value = false
+    revealResult()
 
     if (task?.taskId) {
       history.value.unshift({
@@ -237,6 +268,7 @@ function clearResult() {
   currentTask.value = null
   executions.value = []
   selectedId.value = ''
+  showAllTargets.value = false
 }
 
 // 执行结束后同步一次任务状态，让右侧徽章跟上
@@ -259,10 +291,10 @@ const logFootNote = computed(() => {
 <template>
   <div class="page pg">
     <div class="page-head">
-      <div>
+      <div class="pg__intro">
         <h2 class="page-head__title">测试下发</h2>
         <p class="page-head__desc">
-          实验用的一键下发页：左边填命令选机器，右边立刻跟日志和状态。走的是和正式任务完全一样的
+          填命令、选机器、看日志。和正式任务走同一条
           <code class="code-inline">POST /api/tasks</code> 通道。
         </p>
       </div>
@@ -273,14 +305,15 @@ const logFootNote = computed(() => {
     </div>
 
     <div class="pg__cols">
-      <!-- 左：表单 -->
-      <div class="panel pg__form">
+      <!-- 左：命令与目标 -->
+      <section class="panel pg__form">
         <div class="panel__head">
           <div class="panel__title">下发配置</div>
-          <span class="muted">{{ form.targets.length }} 台目标</span>
+          <span class="muted">已选 {{ form.targets.length }} 台</span>
         </div>
+
         <div class="panel__body pg__form-body">
-          <el-form label-position="top">
+          <el-form label-position="top" class="pg__form-inner">
             <el-form-item label="目标机器">
               <AgentPicker v-model="form.targets" />
             </el-form-item>
@@ -316,7 +349,14 @@ const logFootNote = computed(() => {
                 <el-input v-model="form.cwd" placeholder="留空用默认目录" spellcheck="false" class="mono" />
               </el-form-item>
               <el-form-item label="超时（秒）">
-                <el-input-number v-model="form.timeoutSec" :min="1" :max="86400" :step="30" controls-position="right" />
+                <el-input-number
+                  v-model="form.timeoutSec"
+                  :min="1"
+                  :max="86400"
+                  :step="30"
+                  controls-position="right"
+                  class="pg__number"
+                />
               </el-form-item>
             </div>
 
@@ -326,9 +366,9 @@ const logFootNote = computed(() => {
 
             <el-form-item :error="callbackUrlError || undefined">
               <template #label>
-                <span>
+                <span class="lbl">
                   回调地址 callbackUrl
-                  <span class="muted">（选填，任务终态后 POST 一次结果，联调回调用）</span>
+                  <span class="lbl__hint">选填，终态后 POST 一次结果</span>
                 </span>
               </template>
               <el-input
@@ -339,33 +379,16 @@ const logFootNote = computed(() => {
                 clearable
               />
             </el-form-item>
-
-            <el-collapse class="pg__collapse">
-              <el-collapse-item name="env">
-                <template #title>
-                  <span class="collapse-title">
-                    环境变量
-                    <el-tag v-if="Object.keys(form.env).length" size="small" round>
-                      {{ Object.keys(form.env).length }}
-                    </el-tag>
-                  </span>
-                </template>
-                <EnvEditor v-model="form.env" />
-              </el-collapse-item>
-              <el-collapse-item name="cond">
-                <template #title>
-                  <span class="collapse-title">
-                    判定配置（可选）
-                    <el-tag v-if="form.conditionConfig" size="small" type="warning" round>
-                      {{ form.conditionConfig.rules.length }} 条规则
-                    </el-tag>
-                  </span>
-                </template>
-                <ConditionEditor v-model="form.conditionConfig" />
-              </el-collapse-item>
-            </el-collapse>
           </el-form>
+
+          <div class="pg__adv-link">
+            <span class="muted">
+              环境变量 {{ envCount || 0 }} 项 · 判定 {{ ruleCount ? `${ruleCount} 条规则` : '未配置' }}
+            </span>
+            <button class="link-btn pg__adv-btn" @click="openAdvanced">高级选项</button>
+          </div>
         </div>
+
         <div class="pg__form-foot">
           <el-button
             type="primary"
@@ -378,43 +401,40 @@ const logFootNote = computed(() => {
           >
             立即下发
           </el-button>
-          <div v-if="!valid" class="muted pg__tip">请先填写命令并选择至少一台机器</div>
+          <div v-if="!valid" class="muted pg__tip">先填命令，再选至少一台机器</div>
         </div>
-      </div>
+      </section>
 
-      <!-- 右：结果 -->
-      <div class="pg__result">
+      <!-- 右：结果与日志 -->
+      <section ref="resultRef" class="pg__result">
         <div class="panel">
-          <div class="panel__head">
-            <div class="panel__title">
-              本次下发
-              <span v-if="currentTask" class="hint">
-                taskId <CopyableId :value="currentTask.taskId" :head="10" />
-              </span>
-              <span v-if="currentTask?.requestId" class="hint">
+          <div class="panel__head pg__head">
+            <div class="pg__head-row">
+              <div class="panel__title pg__head-title">
+                本次下发
+                <StatusPill v-if="currentTask" :status="currentTask.status" />
+              </div>
+              <div v-if="currentTask" class="pg__head-actions">
+                <el-button size="small" :icon="'Refresh'" @click="refreshTask">刷新</el-button>
+                <el-button v-if="running" size="small" type="danger" plain @click="onCancel">
+                  取消下发
+                </el-button>
+                <el-button size="small" text @click="clearResult">清空</el-button>
+              </div>
+            </div>
+            <div v-if="currentTask" class="pg__ids">
+              <span class="pg__id">taskId <CopyableId :value="currentTask.taskId" :head="10" /></span>
+              <span v-if="currentTask.requestId" class="pg__id">
                 requestId <CopyableId :value="currentTask.requestId" :head="12" />
               </span>
             </div>
-            <div class="pg__result-actions">
-              <el-button v-if="currentTask" size="small" :icon="'Refresh'" @click="refreshTask">刷新</el-button>
-              <el-button
-                v-if="currentTask && running"
-                size="small"
-                type="danger"
-                plain
-                @click="onCancel"
-              >
-                取消本次下发
-              </el-button>
-              <el-button v-if="currentTask" size="small" text @click="clearResult">清空</el-button>
-            </div>
           </div>
 
-          <div class="panel__body">
+          <div class="panel__body pg__result-body">
             <EmptyState
               v-if="!currentTask"
               title="还没有下发"
-              desc="左侧填好命令和目标机器，点「立即下发」，这里会实时显示状态与日志"
+              desc="点「立即下发」后，这里显示状态与执行信息"
               size="small"
             />
             <template v-else>
@@ -423,9 +443,9 @@ const logFootNote = computed(() => {
                 正在等待 Server 生成执行记录…
               </div>
 
-              <div v-if="executions.length" class="pg__targets">
+              <div v-if="executions.length" class="pg__targets" :class="{ 'is-expanded': showAllTargets }">
                 <button
-                  v-for="ex in executions"
+                  v-for="ex in visibleExecutions"
                   :key="ex.executeId"
                   class="pg__target"
                   :class="{ 'is-active': ex.executeId === selectedId }"
@@ -437,60 +457,67 @@ const logFootNote = computed(() => {
                   />
                   <span class="pg__target-name">{{ ex.displayTag || ex.agentId || '未分配' }}</span>
                 </button>
+                <button
+                  v-if="hiddenTargetCount > 0"
+                  class="pg__target pg__target--more"
+                  @click="showAllTargets = true"
+                >
+                  +{{ hiddenTargetCount }} 台
+                </button>
+                <button
+                  v-else-if="showAllTargets && executions.length > TARGET_PREVIEW"
+                  class="pg__target pg__target--more"
+                  @click="showAllTargets = false"
+                >
+                  收起
+                </button>
               </div>
 
               <div v-if="execution" class="pg__meta">
                 <span class="pg__meta-item">
-                  executeId
-                  <router-link :to="`/executions/${execution.executeId}`" class="link-btn mono">
-                    {{ execution.executeId.slice(0, 10) }}
-                  </router-link>
+                  executeId <CopyableId :value="execution.executeId" :head="10" />
                 </span>
                 <span class="pg__meta-item">退出码 <b class="mono">{{ execution.exitCode ?? '-' }}</b></span>
                 <span class="pg__meta-item">
                   耗时 <b class="mono">{{ durationBetween(execution.startedAt, execution.finishedAt) }}</b>
                 </span>
                 <span class="pg__meta-item">开始 <b class="mono">{{ formatTime(execution.startedAt) }}</b></span>
-                <span class="spacer" />
-                <el-button
-                  size="small"
-                  text
-                  type="primary"
-                  @click="router.push(`/executions/${execution.executeId}`)"
-                >
-                  打开完整详情
-                </el-button>
+                <router-link :to="`/executions/${execution.executeId}`" class="link-btn pg__meta-more">
+                  完整详情
+                </router-link>
               </div>
             </template>
           </div>
         </div>
 
         <div class="panel pg__log-panel">
-          <div class="panel__head">
-            <div class="panel__title">
-              实时日志
-              <span v-if="selectedId" class="hint mono">{{ selectedId.slice(0, 12) }}</span>
-            </div>
-            <div class="pg__result-actions">
-              <el-tag
-                v-if="selectedId"
-                size="small"
-                round
-                :type="sseState === 'open' ? 'success' : finished ? 'info' : 'warning'"
-              >
-                {{ finished ? '已结束' : SSE_STATE_TEXT[sseState] }}
-              </el-tag>
-              <el-button v-if="selectedId && !finished && sseState !== 'open'" size="small" text @click="reconnect">
-                重连
-              </el-button>
+          <div class="panel__head pg__head">
+            <div class="pg__head-row">
+              <div class="panel__title pg__head-title">
+                实时日志
+                <span v-if="selectedId" class="hint mono pg__head-id">{{ selectedId.slice(0, 12) }}</span>
+              </div>
+              <div class="pg__head-actions">
+                <el-tag
+                  v-if="selectedId"
+                  size="small"
+                  round
+                  :type="sseState === 'open' ? 'success' : finished ? 'info' : 'warning'"
+                >
+                  {{ finished ? '已结束' : SSE_STATE_TEXT[sseState] }}
+                </el-tag>
+                <el-button v-if="selectedId && !finished && sseState !== 'open'" size="small" text @click="reconnect">
+                  重连
+                </el-button>
+              </div>
             </div>
           </div>
-          <div class="panel__body">
+          <div class="panel__body pg__log-body">
             <EmptyState
               v-if="!selectedId"
               size="small"
               title="日志会在下发后自动出现"
-              desc="下发成功且 Server 分配到机器后，这里会实时推送 stdout / stderr"
+              desc="Server 分配到机器后，这里实时推送 stdout / stderr"
             />
             <LogTerminal
               v-else
@@ -499,7 +526,7 @@ const logFootNote = computed(() => {
               :dropped-bytes="droppedBytes"
               :total-bytes="totalBytes"
               :loading="logLoading"
-              height="420px"
+              height="var(--pg-log-h, 420px)"
               :file-name="`${selectedId}.log`"
               :foot-note="logFootNote"
             />
@@ -528,40 +555,80 @@ const logFootNote = computed(() => {
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
+
+    <!-- 全宽：编辑器需要横向空间，放在两栏下方 -->
+    <section ref="advancedRef" class="panel pg__advanced">
+      <div class="panel__head">
+        <div class="panel__title">
+          高级选项
+          <span class="hint">环境变量与判定配置，留空即用默认</span>
+        </div>
+        <span class="muted">
+          {{ envCount ? `${envCount} 个变量` : '无变量' }} ·
+          {{ ruleCount ? `${ruleCount} 条规则` : '无规则' }}
+        </span>
+      </div>
+      <div class="panel__body panel__body--flush">
+        <el-collapse v-model="advancedOpen" class="pg__collapse">
+          <el-collapse-item name="env">
+            <template #title>
+              <span class="collapse-title">
+                环境变量
+                <el-tag v-if="envCount" size="small" round>{{ envCount }}</el-tag>
+              </span>
+            </template>
+            <EnvEditor v-model="form.env" />
+          </el-collapse-item>
+          <el-collapse-item name="cond">
+            <template #title>
+              <span class="collapse-title">
+                判定配置
+                <el-tag v-if="ruleCount" size="small" type="warning" round>{{ ruleCount }} 条规则</el-tag>
+              </span>
+            </template>
+            <ConditionEditor v-model="form.conditionConfig" />
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.pg__cols {
-  display: grid;
-  grid-template-columns: minmax(380px, 0.85fr) minmax(0, 1.15fr);
-  gap: 14px;
-  align-items: start;
+.pg {
+  /* 日志高度跟着视口走：768 高的本子上也能把最新输出留在首屏内 */
+  --pg-log-h: clamp(280px, 52vh, 520px);
 }
 
-@media (max-width: 1200px) {
-  .pg__cols {
-    grid-template-columns: 1fr;
-  }
+.pg__intro {
+  min-width: 0;
+  max-width: 40rem;
+}
+
+/* 默认单栏：整页一条滚动条，表单不设内部高度上限 */
+.pg__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
 }
 
 .pg__form {
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 0;
-}
-
-.pg__form-body {
-  max-height: calc(100vh - 240px);
-  overflow-y: auto;
+  min-width: 0;
 }
 
 .pg__form-foot {
+  flex: none;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   padding: 12px 16px;
   border-top: 1px solid var(--nat-border);
+  border-radius: 0 0 var(--nat-radius) var(--nat-radius);
   background: #fbfcfe;
 }
 
@@ -575,22 +642,59 @@ const logFootNote = computed(() => {
   font-size: 12px;
 }
 
+/* 两栏：日志优先给宽度，表单固定一条窄列 */
+@media (min-width: 1321px) {
+  .pg {
+    --pg-log-h: clamp(260px, calc(100vh - 480px), 620px);
+  }
+
+  .pg__cols {
+    grid-template-columns: minmax(340px, 400px) minmax(460px, 1fr);
+  }
+
+  .pg__form {
+    position: sticky;
+    /* 52 顶栏 + 上下各 12 留白 */
+    top: 12px;
+    max-height: calc(100vh - 76px);
+  }
+
+  .pg__form-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+/* 单栏时表单跨满宽会把输入框拉得过长，限一个可读宽度 */
+.pg__form-inner,
+.pg__adv-link {
+  max-width: 46rem;
+}
+
 .pg__grid {
   display: grid;
-  grid-template-columns: 1fr 160px;
+  /* 列窄了自动堆叠，不留半截输入框 */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 0 12px;
 }
 
-.pg__collapse {
-  border-top: 1px solid var(--nat-border);
-  margin-top: 4px;
+.pg__number {
+  width: 100%;
 }
 
-.collapse-title {
-  display: inline-flex;
+.pg__adv-link {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 560;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+  font-size: 12px;
+}
+
+.pg__adv-btn {
+  margin-left: auto;
 }
 
 .quick {
@@ -610,14 +714,76 @@ const logFootNote = computed(() => {
   color: var(--nat-accent);
 }
 
-.pg__result > .panel + .panel {
-  margin-top: 14px;
+.pg__result {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
 }
 
-.pg__result-actions {
+.pg__result > .panel + .panel {
+  margin-top: 0;
+}
+
+/* 标题一行、id 一行：长 id 不再挤掉右侧按钮 */
+.pg__head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.pg__head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pg__head-title {
+  min-width: 0;
+}
+
+.pg__head-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg__head-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.pg__ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--nat-text-weak);
+}
+
+.pg__id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 空态和运行态高度对齐，避免下发瞬间整页跳动 */
+.pg__result-body {
+  min-height: 108px;
+}
+
+.pg__log-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: calc(var(--pg-log-h) + 62px);
 }
 
 .pg__waiting {
@@ -626,13 +792,18 @@ const logFootNote = computed(() => {
   gap: 8px;
   color: var(--nat-text-sub);
   font-size: 12.5px;
-  padding: 6px 0 10px;
+  padding: 2px 0 10px;
 }
 
 .pg__targets {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.pg__targets.is-expanded {
+  max-height: 168px;
+  overflow-y: auto;
 }
 
 .pg__target {
@@ -645,7 +816,6 @@ const logFootNote = computed(() => {
   padding: 6px 10px;
   cursor: pointer;
   font: inherit;
-  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .pg__target:hover {
@@ -654,7 +824,12 @@ const logFootNote = computed(() => {
 
 .pg__target.is-active {
   border-color: var(--nat-accent);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  box-shadow: inset 0 0 0 1px var(--nat-accent);
+}
+
+.pg__target--more {
+  color: var(--nat-text-sub);
+  font-size: 12.5px;
 }
 
 .pg__target-name {
@@ -665,7 +840,7 @@ const logFootNote = computed(() => {
 .pg__meta {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
   flex-wrap: wrap;
   margin-top: 12px;
   padding-top: 10px;
@@ -674,12 +849,48 @@ const logFootNote = computed(() => {
   color: var(--nat-text-weak);
 }
 
+.pg__meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .pg__meta-item b {
   color: var(--nat-text);
 }
 
-.spacer {
-  flex: 1;
+.pg__meta-more {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.pg__advanced {
+  margin-top: 14px;
+}
+
+.pg__collapse {
+  border-top: none;
+  border-bottom: none;
+}
+
+.pg__collapse :deep(.el-collapse-item__header) {
+  padding: 0 16px;
+  border-bottom-color: var(--nat-border);
+}
+
+.pg__collapse :deep(.el-collapse-item:last-child .el-collapse-item__wrap) {
+  border-bottom: none;
+}
+
+.pg__collapse :deep(.el-collapse-item__content) {
+  padding: 4px 16px 18px;
+}
+
+.collapse-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 560;
 }
 
 .hist {
@@ -713,6 +924,7 @@ const logFootNote = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .lbl__hint {

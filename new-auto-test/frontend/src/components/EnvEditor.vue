@@ -98,9 +98,7 @@ function applyBulk() {
 
 <template>
   <div class="env">
-    <div v-if="!rows.length" class="env__empty">
-      未设置环境变量，执行时继承 Agent 进程环境。
-    </div>
+    <div v-if="!rows.length" class="env__empty">未设变量，执行时继承 Agent 环境。</div>
 
     <div v-for="row in rows" :key="row.id" class="env__row">
       <el-input
@@ -111,20 +109,24 @@ function applyBulk() {
         :class="{ 'is-dup': duplicated.has(row.k.trim()) }"
         @change="sync"
       />
-      <span class="env__eq">=</span>
       <el-input v-model="row.v" placeholder="VALUE" class="env__v" spellcheck="false" @change="sync" />
-      <el-button text type="danger" :icon="'Delete'" @click="removeRow(row.id)" />
+      <el-button class="env__del" text type="danger" :icon="'Delete'" title="删除" @click="removeRow(row.id)" />
     </div>
 
-    <div v-if="duplicated.size" class="env__warn">存在重复的 KEY：{{ [...duplicated].join('、') }}，后者会覆盖前者。</div>
+    <div v-if="duplicated.size" class="env__warn">重复 KEY：{{ [...duplicated].join('、') }}，后者覆盖前者</div>
 
     <div class="env__actions">
-      <el-button size="small" :icon="'Plus'" @click="addRow">添加变量</el-button>
-      <el-button size="small" :icon="'Document'" @click="openBulk">批量编辑</el-button>
+      <el-button size="small" :icon="'Plus'" @click="addRow">添加</el-button>
+      <el-button size="small" :icon="'Document'" @click="openBulk">批量</el-button>
       <el-button v-if="rows.length" size="small" text type="danger" @click="clearAll">清空</el-button>
     </div>
 
-    <el-dialog v-model="bulkVisible" title="批量编辑环境变量" width="520px" append-to-body>
+    <el-dialog
+      v-model="bulkVisible"
+      title="批量编辑环境变量"
+      width="min(520px, calc(100vw - 32px))"
+      append-to-body
+    >
       <el-input
         v-model="bulkText"
         type="textarea"
@@ -132,7 +134,7 @@ function applyBulk() {
         spellcheck="false"
         placeholder="每行一个，形如&#10;JAVA_HOME=/usr/lib/jvm/java-17&#10;MODE=stress"
       />
-      <div class="muted" style="margin-top: 8px">以 # 开头的行会被忽略。</div>
+      <div class="muted env__dialog-hint"># 开头的行会忽略。</div>
       <template #footer>
         <el-button @click="bulkVisible = false">取消</el-button>
         <el-button type="primary" @click="applyBulk">应用</el-button>
@@ -142,41 +144,79 @@ function applyBulk() {
 </template>
 
 <style scoped>
+.env {
+  /* 在 el-form-item 里不要收缩成内容宽度 */
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+/* 窄容器：KEY 与删除同行，VALUE 独占一行；宽容器再并成一行 */
 .env__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'k del'
+    'v v';
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  /* 行内 4px、行间 14px：窄屏下 KEY / VALUE 才读得出是一组 */
+  gap: 4px 8px;
+  margin-bottom: 14px;
 }
 
 .env__k {
-  width: 38%;
+  grid-area: k;
+  min-width: 0;
 }
 
 .env__v {
-  flex: 1;
+  grid-area: v;
+  min-width: 0;
 }
 
-.env__eq {
-  color: var(--nat-text-weak);
+.env__del {
+  grid-area: del;
+}
+
+@container (min-width: 460px) {
+  .env__row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+    grid-template-areas: 'k v del';
+    margin-bottom: 6px;
+  }
 }
 
 .env__empty {
   color: var(--nat-text-weak);
   font-size: 12.5px;
+  line-height: 1.45;
   padding: 6px 0 8px;
 }
 
 .env__warn {
   color: #ea8a04;
   font-size: 12px;
+  line-height: 1.45;
   margin: 2px 0 6px;
+  word-break: break-word;
 }
 
 .env__actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
   margin-top: 2px;
+}
+
+/* 用 gap 控制间距，去掉 Element Plus 相邻按钮的 12px 左边距 */
+.env__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.env__dialog-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 :deep(.is-dup .el-input__wrapper) {

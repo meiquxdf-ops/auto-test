@@ -6,7 +6,7 @@ import { getTimeline } from '@/api/timeline'
 import type { Task, TimelineEvent } from '@/api/types'
 import { useAgents } from '@/stores/agents'
 import { countExecutions, flattenExecutions, sumCounts } from '@/utils/aggregate'
-import { durationBetween, formatTime, fromNow, truncateText } from '@/utils/format'
+import { durationBetween, formatTime, fromNow } from '@/utils/format'
 import { AGENT_STATUS_META, statusMeta } from '@/utils/status'
 import StatCard from '@/components/StatCard.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -55,13 +55,35 @@ async function refreshAll() {
   lastLoadedAt.value = Date.now()
 }
 
+/**
+ * 表格列按「主栏实际宽度」取舍，而不是猜视口：
+ * 侧栏 216px、可收起到 62px，只有量出来的宽度才靠得住。
+ */
+const mainPanelEl = ref<HTMLElement | null>(null)
+const mainWidth = ref(1120)
+let observer: ResizeObserver | null = null
+
+const showMachineCol = computed(() => mainWidth.value >= 440)
+const showMetaCol = computed(() => mainWidth.value >= 580)
+const showTimeCol = computed(() => mainWidth.value >= 700)
+
 onMounted(() => {
   void refreshAll()
   timer = window.setInterval(() => void refreshAll(), 10_000)
+
+  if (mainPanelEl.value && typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      if (w > 0 && Math.abs(w - mainWidth.value) >= 4) mainWidth.value = w
+    })
+    observer.observe(mainPanelEl.value)
+  }
 })
 
 onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
+  observer?.disconnect()
+  observer = null
 })
 
 const agentStats = computed(() => {
@@ -128,7 +150,11 @@ const distribution = computed(() => {
     .filter((x) => x.n > 0)
 })
 
-const hasError = computed(() => !!(agentsError.value || tasksError.value || eventsError.value))
+const agentsFirstLoad = computed(() => agentsLoading.value && !agents.value.length)
+const tasksFirstLoad = computed(() => tasksLoading.value && !tasks.value.length)
+
+/** 同一个接口挂了会让六个面板一起报错，页面只留一条 */
+const pageError = computed(() => agentsError.value || tasksError.value || eventsError.value)
 </script>
 
 <template>
@@ -137,8 +163,7 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
       <div>
         <h2 class="page-head__title">总览</h2>
         <p class="page-head__desc">
-          集群实时状态与近期事件，每 10 秒自动刷新
-          <template v-if="lastLoadedAt"> · 最后更新 {{ fromNow(lastLoadedAt) }}</template>
+          每 10 秒自动刷新<template v-if="lastLoadedAt"> · 更新于 {{ fromNow(lastLoadedAt) }}</template>
         </p>
       </div>
       <div class="page-head__actions">
@@ -149,17 +174,8 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
       </div>
     </div>
 
-    <el-alert
-      v-if="hasError"
-      class="mb14"
-      type="error"
-      show-icon
-      :closable="false"
-      :title="agentsError || tasksError || eventsError"
-    >
-      <template #default>
-        请确认 Server（默认 <code class="code-inline">http://127.0.0.1:8080</code>）已启动，或在右上角调整接口地址。
-      </template>
+    <el-alert v-if="pageError" class="page-error" type="error" show-icon :closable="false" :title="pageError">
+      <template #default>检查 Server 是否已启动，或在右上角修改接口地址。</template>
     </el-alert>
 
     <div class="cards">
@@ -168,26 +184,23 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
         :value="agentStats.online + agentStats.busy"
         :unit="`/ ${agents.length}`"
         color="#16a34a"
-        icon="Monitor"
-        :loading="agentsLoading && !agents.length"
-        :hint="`空闲 ${agentStats.online} · 忙碌 ${agentStats.busy} · 失联 ${agentStats.disconnected} · 离线 ${agentStats.offline}`"
+        :loading="agentsFirstLoad"
+        :hint="`空闲 ${agentStats.online} · 忙碌 ${agentStats.busy} · 不可用 ${agentStats.disconnected + agentStats.offline}`"
         to="/agents"
       />
       <StatCard
-        label="运行中执行"
+        label="运行中"
         :value="runningCount"
         color="#2563eb"
-        icon="VideoPlay"
-        :loading="tasksLoading && !tasks.length"
-        :hint="`并发水位 ${capacity.used}/${capacity.slots} 槽位（${capacity.pct}%）`"
+        :loading="tasksFirstLoad"
+        :hint="`槽位 ${capacity.used}/${capacity.slots} · ${capacity.pct}%`"
         to="/tasks"
       />
       <StatCard
-        label="失败 / 阻塞 / 异常"
+        label="需要关注"
         :value="badCount"
         color="#dc2626"
-        icon="WarningFilled"
-        :loading="tasksLoading && !tasks.length"
+        :loading="tasksFirstLoad"
         :hint="`失败 ${counts.fail} · 阻塞 ${counts.block} · 异常 ${counts.exception}`"
         to="/tasks"
       />
@@ -195,151 +208,164 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
         label="排队中"
         :value="pendingCount"
         color="#64748b"
-        icon="Clock"
-        :loading="tasksLoading && !tasks.length"
-        :hint="pendingCount ? '可在任务队列页调整 pending 顺序' : '队列已清空'"
+        :loading="tasksFirstLoad"
+        :hint="pendingCount ? '可在任务队列调整顺序' : '队列已清空'"
         to="/tasks"
       />
     </div>
 
     <div class="cols">
-      <div class="col-main">
-        <div class="panel">
+      <div class="col">
+        <div ref="mainPanelEl" class="panel p-running">
           <div class="panel__head">
             <div class="panel__title">
               正在执行
-              <span class="hint">{{ runningExecutions.length }} 条（最多展示 8 条）</span>
+              <span class="hint">{{ runningExecutions.length }} 条</span>
             </div>
             <router-link to="/tasks" class="link-btn">查看全部</router-link>
           </div>
-          <div class="panel__body panel__body--flush">
-            <el-table v-if="runningExecutions.length" :data="runningExecutions" size="small">
-              <el-table-column label="状态" width="118">
+          <div class="panel__body panel__body--flush table-slot">
+            <div v-if="tasksFirstLoad" class="skel skel--table">
+              <div v-for="i in 5" :key="i" class="skel__row">
+                <span class="skel__bar skel__bar--pill" />
+                <span class="skel__bar skel__bar--wide" />
+                <span class="skel__bar skel__bar--short" />
+              </div>
+            </div>
+            <el-table v-else-if="runningExecutions.length" :data="runningExecutions" size="small">
+              <el-table-column label="状态" width="104">
                 <template #default="{ row }">
                   <StatusPill :status="row.status" :disconnected="row.disconnected" />
                 </template>
               </el-table-column>
-              <el-table-column label="机器" width="150">
+              <el-table-column v-if="showMachineCol" label="机器" min-width="120">
                 <template #default="{ row }">
-                  <span class="nowrap">{{ row.displayTag || row.agentId || '-' }}</span>
+                  <span class="cell-1" :title="row.displayTag || row.agentId || ''">
+                    {{ row.displayTag || row.agentId || '-' }}
+                  </span>
                 </template>
               </el-table-column>
-              <el-table-column label="命令" min-width="240">
+              <el-table-column label="命令" min-width="220">
                 <template #default="{ row }">
-                  <el-tooltip :content="row.command" placement="top" :show-after="400">
-                    <code class="cmd">{{ truncateText(row.command || '-', 70) }}</code>
-                  </el-tooltip>
+                  <span class="cell-1" :title="row.command || ''">
+                    <code class="cmd">{{ row.command || '-' }}</code>
+                  </span>
                 </template>
               </el-table-column>
-              <el-table-column label="已运行" width="92">
+              <el-table-column label="已运行" width="82">
                 <template #default="{ row }">
                   <span class="mono">{{ durationBetween(row.startedAt, null) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="" width="76" align="right">
+              <el-table-column label="" width="64" align="right">
                 <template #default="{ row }">
                   <router-link :to="`/executions/${row.executeId}`" class="link-btn">日志</router-link>
                 </template>
               </el-table-column>
             </el-table>
-            <EmptyState
-              v-else-if="tasksError"
-              size="small"
-              variant="error"
-              title="任务数据加载失败"
-              :desc="tasksError"
-            />
-            <EmptyState v-else size="small" title="当前没有执行在跑" desc="创建任务后会自动调度到空闲机器" />
+            <EmptyState v-else size="small" title="当前没有执行在跑" />
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-attention">
           <div class="panel__head">
             <div class="panel__title">
               需要关注
-              <span class="hint">最近的失败 / 阻塞 / 异常</span>
+              <span class="hint">失败 / 阻塞 / 异常</span>
             </div>
           </div>
-          <div class="panel__body panel__body--flush">
-            <el-table v-if="attentionExecutions.length" :data="attentionExecutions" size="small">
-              <el-table-column label="结果" width="100">
-                <template #default="{ row }"><StatusPill :status="row.status" /></template>
-              </el-table-column>
-              <el-table-column label="机器" width="150">
-                <template #default="{ row }">{{ row.displayTag || row.agentId || '-' }}</template>
-              </el-table-column>
-              <el-table-column label="最后一行 / 命令" min-width="260">
+          <div class="panel__body panel__body--flush table-slot">
+            <div v-if="tasksFirstLoad" class="skel skel--table">
+              <div v-for="i in 4" :key="i" class="skel__row">
+                <span class="skel__bar skel__bar--pill" />
+                <span class="skel__bar skel__bar--wide" />
+                <span class="skel__bar skel__bar--short" />
+              </div>
+            </div>
+            <el-table v-else-if="attentionExecutions.length" :data="attentionExecutions" size="small">
+              <el-table-column label="结果" width="92">
                 <template #default="{ row }">
-                  <code class="cmd">{{ truncateText(row.lastLine || row.command || '-', 80) }}</code>
+                  <StatusPill :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column label="退出码" width="76" align="center">
+              <el-table-column v-if="showMachineCol" label="机器" min-width="120">
+                <template #default="{ row }">
+                  <span class="cell-1" :title="row.displayTag || row.agentId || ''">
+                    {{ row.displayTag || row.agentId || '-' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="最后一行 / 命令" min-width="220">
+                <template #default="{ row }">
+                  <span class="cell-1" :title="row.lastLine || row.command || ''">
+                    <code class="cmd">{{ row.lastLine || row.command || '-' }}</code>
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="showMetaCol" label="退出码" width="70" align="center">
                 <template #default="{ row }">
                   <span class="mono">{{ row.exitCode ?? '-' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="结束时间" width="130">
+              <el-table-column v-if="showTimeCol" label="结束时间" width="128">
                 <template #default="{ row }">
-                  <span class="mono sub">{{ formatTime(row.finishedAt) }}</span>
+                  <span class="mono sub nowrap">{{ formatTime(row.finishedAt) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="" width="76" align="right">
+              <el-table-column label="" width="64" align="right">
                 <template #default="{ row }">
                   <router-link :to="`/executions/${row.executeId}`" class="link-btn">详情</router-link>
                 </template>
               </el-table-column>
             </el-table>
-            <EmptyState
-              v-else-if="tasksError"
-              size="small"
-              variant="error"
-              title="任务数据加载失败"
-              :desc="tasksError"
-            />
-            <EmptyState v-else size="small" title="近期没有失败或阻塞" desc="集群状态良好" />
+            <EmptyState v-else size="small" title="近期没有失败或阻塞" />
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-recent">
           <div class="panel__head">
             <div class="panel__title">最近任务</div>
             <router-link to="/tasks" class="link-btn">任务队列</router-link>
           </div>
-          <div class="panel__body panel__body--flush">
-            <el-table v-if="recentTasks.length" :data="recentTasks" size="small">
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }"><StatusPill :status="row.status" /></template>
-              </el-table-column>
-              <el-table-column label="命令" min-width="260">
+          <div class="panel__body panel__body--flush table-slot table-slot--sm">
+            <div v-if="tasksFirstLoad" class="skel skel--table">
+              <div v-for="i in 4" :key="i" class="skel__row">
+                <span class="skel__bar skel__bar--pill" />
+                <span class="skel__bar skel__bar--wide" />
+                <span class="skel__bar skel__bar--short" />
+              </div>
+            </div>
+            <el-table v-else-if="recentTasks.length" :data="recentTasks" size="small">
+              <el-table-column label="状态" width="92">
                 <template #default="{ row }">
-                  <code class="cmd">{{ truncateText(row.command, 70) }}</code>
+                  <StatusPill :status="row.status" />
                 </template>
               </el-table-column>
-              <el-table-column label="目标" width="90" align="center">
+              <el-table-column label="命令" min-width="220">
+                <template #default="{ row }">
+                  <span class="cell-1" :title="row.command || ''">
+                    <code class="cmd">{{ row.command || '-' }}</code>
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="showMetaCol" label="目标" width="70" align="center">
                 <template #default="{ row }">{{ row.total || row.targets.length }} 台</template>
               </el-table-column>
-              <el-table-column label="创建时间" width="130">
+              <el-table-column v-if="showTimeCol" label="创建时间" width="128">
                 <template #default="{ row }">
-                  <span class="mono sub">{{ formatTime(row.createdAt) }}</span>
+                  <span class="mono sub nowrap">{{ formatTime(row.createdAt) }}</span>
                 </template>
               </el-table-column>
             </el-table>
-            <EmptyState
-              v-else-if="tasksError"
-              size="small"
-              variant="error"
-              title="任务数据加载失败"
-              :desc="tasksError"
-            />
-            <EmptyState v-else size="small" title="还没有任务" desc="从任务队列页或测试下发页创建第一个任务" />
+            <EmptyState v-else size="small" title="还没有任务" />
           </div>
         </div>
       </div>
 
-      <div class="col-side">
-        <div class="panel">
+      <div class="col">
+        <div class="panel p-agents">
           <div class="panel__head">
-            <div class="panel__title">机器状态分布</div>
+            <div class="panel__title">机器状态</div>
             <router-link to="/agents" class="link-btn">机器列表</router-link>
           </div>
           <div class="panel__body">
@@ -350,35 +376,33 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
                 <span class="dist__value">{{ item.value }}</span>
               </div>
             </div>
-            <EmptyState
-              v-else-if="agentsError"
-              size="small"
-              variant="error"
-              title="机器数据加载失败"
-              :desc="agentsError"
-            />
-            <EmptyState v-else size="small" title="还没有机器接入" desc="Agent 启动后会自动注册到 Server" />
+            <div v-else-if="agentsFirstLoad" class="skel skel--dist">
+              <span v-for="i in 4" :key="i" class="skel__tile" />
+            </div>
+            <EmptyState v-else size="small" title="还没有机器接入" />
 
             <template v-if="busiestAgents.length">
               <div class="side-sub">负载最高</div>
               <div v-for="a in busiestAgents" :key="a.agentId" class="busy-row">
                 <AgentStatusLight :status="a.status" :show-label="false" />
-                <span class="busy-row__name text-ellipsis">{{ a.displayTag || a.agentId }}</span>
+                <span class="busy-row__name" :title="a.displayTag || a.agentId">
+                  {{ a.displayTag || a.agentId }}
+                </span>
                 <el-progress
                   class="busy-row__bar"
                   :percentage="Math.min(100, Math.round((a.running / Math.max(1, a.concurrency)) * 100))"
                   :stroke-width="6"
                   :show-text="false"
                 />
-                <span class="mono muted">{{ a.running }}/{{ a.concurrency }}</span>
+                <span class="mono busy-row__n">{{ a.running }}/{{ a.concurrency }}</span>
               </div>
             </template>
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-dist">
           <div class="panel__head">
-            <div class="panel__title">执行结果分布</div>
+            <div class="panel__title">执行结果</div>
           </div>
           <div class="panel__body">
             <div v-if="distribution.length">
@@ -399,16 +423,15 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
                 </span>
               </div>
             </div>
-            <EmptyState
-              v-else
-              size="small"
-              :variant="tasksError ? 'error' : 'empty'"
-              :title="tasksError ? '执行数据加载失败' : '还没有执行记录'"
-            />
+            <div v-else-if="tasksFirstLoad" class="skel skel--bar">
+              <span class="skel__bar skel__bar--full" />
+              <span class="skel__bar skel__bar--wide" />
+            </div>
+            <EmptyState v-else size="small" title="还没有执行记录" />
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel p-events">
           <div class="panel__head">
             <div class="panel__title">
               近期事件
@@ -416,13 +439,9 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
             </div>
             <router-link to="/timeline" class="link-btn">完整时间线</router-link>
           </div>
+          <!-- 不做内层滚动：宁可少展示几条，也不要把卡片从中间切开 -->
           <div class="panel__body panel__body--flush events">
-            <TimelineList
-              :events="events.slice(0, 12)"
-              :loading="eventsLoading"
-              compact
-              :empty-text="eventsError ? '事件加载失败' : '暂无事件上报'"
-            />
+            <TimelineList :events="events.slice(0, 8)" :loading="eventsLoading" compact empty-text="暂无事件" />
           </div>
         </div>
       </div>
@@ -431,40 +450,189 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
 </template>
 
 <style scoped>
-.mb14 {
+.page-error {
   margin-bottom: 14px;
 }
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 14px;
 }
 
+@media (max-width: 1080px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .cols {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr);
   gap: 14px;
   align-items: start;
 }
 
-@media (max-width: 1180px) {
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.panel + .panel {
+  margin-top: 0;
+}
+
+/* 侧栏 216px + 页面留白 44px：1400 视口下主栏才够放完整表格 */
+@media (max-width: 1400px) {
   .cols {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .col {
+    display: contents;
+  }
+
+  .p-running {
+    order: 1;
+  }
+
+  .p-attention {
+    order: 2;
+  }
+
+  .p-events {
+    order: 3;
+  }
+
+  .p-agents {
+    order: 4;
+  }
+
+  .p-dist {
+    order: 5;
+  }
+
+  .p-recent {
+    order: 6;
   }
 }
 
-.col-main > .panel + .panel,
-.col-side > .panel + .panel {
-  margin-top: 14px;
+/* 加载态先把高度占住，数据回来时页面不再跳 */
+.table-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 224px;
+}
+
+.table-slot--sm {
+  min-height: 188px;
+}
+
+/* 表格贴顶，占位/空态居中，刷新前后高度不变 */
+.table-slot > .skel,
+.table-slot > .empty {
+  margin: auto 0;
+}
+
+.skel {
+  animation: skel-fade 1.4s ease-in-out infinite;
+}
+
+.skel--table {
+  padding: 14px 16px;
+}
+
+.skel__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+}
+
+.skel__bar {
+  height: 10px;
+  border-radius: 5px;
+  background: #eef1f6;
+}
+
+.skel__bar--pill {
+  width: 72px;
+  height: 18px;
+  border-radius: 9px;
+}
+
+.skel__bar--wide {
+  flex: 1;
+}
+
+.skel__bar--short {
+  width: 56px;
+}
+
+.skel__bar--full {
+  display: block;
+  width: 100%;
+  height: 10px;
+}
+
+.skel--bar .skel__bar--wide {
+  display: block;
+  width: 60%;
+  margin-top: 12px;
+}
+
+.skel--dist {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.skel__tile {
+  height: 36px;
+  border-radius: 8px;
+  background: #f4f6fa;
+}
+
+@keyframes skel-fade {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
+  }
+}
+
+/* 单元格统一走 CSS 省略号 + title，不再按字符数截断 */
+.cell-1 {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cmd {
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   color: #26303d;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .dist {
@@ -504,7 +672,7 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
 }
 
 .side-sub {
-  margin: 14px 0 8px;
+  margin: 16px 0 8px;
   font-size: 12px;
   color: var(--nat-text-weak);
 }
@@ -512,17 +680,28 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
 .busy-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 7px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .busy-row__name {
-  width: 96px;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .busy-row__bar {
-  flex: 1;
+  flex: 0 0 84px;
+  width: 84px;
+}
+
+.busy-row__n {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--nat-text-weak);
 }
 
 .bar {
@@ -564,8 +743,6 @@ const hasError = computed(() => !!(agentsError.value || tasksError.value || even
 }
 
 .events {
-  max-height: 520px;
-  overflow-y: auto;
-  padding: 0 10px;
+  padding: 2px 12px 8px;
 }
 </style>

@@ -4,7 +4,7 @@ import Sortable from 'sortablejs'
 import { reorderTasks } from '@/api/tasks'
 import { toastError, toastOk } from '@/api/http'
 import type { Task } from '@/api/types'
-import { formatTime, truncateText } from '@/utils/format'
+import { formatTime } from '@/utils/format'
 import EmptyState from './EmptyState.vue'
 
 const visible = defineModel<boolean>({ required: true })
@@ -118,20 +118,18 @@ watch(
 </script>
 
 <template>
-  <el-drawer v-model="visible" size="620px" :with-header="false">
+  <el-drawer v-model="visible" size="min(620px, 100vw)" :with-header="false">
     <div class="qr">
       <div class="qr__head">
-        <div>
+        <div class="qr__head-text">
           <div class="qr__title">调整排队顺序</div>
-          <div class="qr__sub">
-            拖动左侧手柄或用按钮调整。只有 <b>pending</b> 的任务可以排序，正在执行的不会被抢占。
-          </div>
+          <div class="qr__sub">仅 <b>pending</b> 任务可排序，执行中的不会被抢占。</div>
         </div>
-        <el-button text :icon="'Close'" @click="close" />
+        <el-button text :icon="'Close'" title="关闭" @click="close" />
       </div>
 
       <div class="qr__body">
-        <EmptyState v-if="!list.length" title="队列里没有排队中的任务" desc="pending 状态的任务才会出现在这里" />
+        <EmptyState v-if="!list.length" title="没有排队中的任务" desc="pending 状态的任务才会出现在这里" />
         <div v-else ref="listEl" class="qr__list">
           <div v-for="(task, index) in list" :key="task.taskId" class="qr__item">
             <span class="qr__handle" title="拖动排序">
@@ -139,9 +137,9 @@ watch(
             </span>
             <span class="qr__index">{{ index + 1 }}</span>
             <div class="qr__main">
-              <code class="qr__cmd">{{ truncateText(task.command, 76) }}</code>
+              <code class="qr__cmd" :title="task.command">{{ task.command }}</code>
               <div class="qr__meta">
-                {{ task.targets.length || task.total }} 台目标 · 创建于 {{ formatTime(task.createdAt) }}
+                {{ task.targets.length || task.total }} 台 · {{ formatTime(task.createdAt) }}
                 <template v-if="task.operator"> · {{ task.operator }}</template>
               </div>
             </div>
@@ -177,31 +175,44 @@ watch(
 
       <div class="qr__foot">
         <el-button text :disabled="!dirty" @click="reset">还原</el-button>
+        <span v-if="dirty" class="qr__dirty">未保存</span>
         <span class="spacer" />
-        <span v-if="dirty" class="qr__dirty">顺序已改动，未保存</span>
-        <el-button @click="close">取消</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!dirty || !list.length" @click="save">
-          保存顺序
-        </el-button>
+        <div class="qr__foot-actions">
+          <el-button @click="close">取消</el-button>
+          <el-button type="primary" :loading="saving" :disabled="!dirty || !list.length" @click="save">
+            保存顺序
+          </el-button>
+        </div>
       </div>
     </div>
   </el-drawer>
 </template>
 
 <style scoped>
+/*
+ * 抽屉正文自带 20px 内边距。负边距把它顶掉的同时，高度也要补回来，
+ * 否则 height:100% 会比可用高度矮 40px，页脚底下留一条白边。
+ */
 .qr {
+  --qr-pad: var(--el-drawer-padding-primary, 20px);
+
   display: flex;
   flex-direction: column;
-  height: 100%;
-  margin: -20px;
+  height: calc(100% + var(--qr-pad) * 2);
+  margin: calc(var(--qr-pad) * -1);
 }
 
 .qr__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--nat-border);
+}
+
+.qr__head-text {
+  min-width: 0;
 }
 
 .qr__title {
@@ -213,11 +224,12 @@ watch(
   color: var(--nat-text-weak);
   font-size: 12px;
   margin-top: 4px;
-  line-height: 1.6;
+  line-height: 1.45;
 }
 
 .qr__body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px 20px;
 }
@@ -251,8 +263,22 @@ watch(
 .qr__handle {
   cursor: grab;
   color: var(--nat-text-weak);
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-left: -4px;
+  border-radius: 6px;
+  font-size: 16px;
+  touch-action: none;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.qr__handle:hover {
+  background: #eef1f6;
+  color: var(--nat-text-sub);
 }
 
 .qr__handle:active {
@@ -277,31 +303,58 @@ watch(
   min-width: 0;
 }
 
+/* 命令按可用宽度截断，不按固定字数，也不按字符硬折行 */
 .qr__cmd {
+  display: block;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12.5px;
-  word-break: break-all;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .qr__meta {
   color: var(--nat-text-weak);
   font-size: 11.5px;
+  line-height: 1.45;
   margin-top: 3px;
 }
 
 .qr__btns {
   display: flex;
-  gap: 0;
+  align-items: center;
+  gap: 2px;
   flex: none;
+}
+
+.qr__btns :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.qr__btns :deep(.el-button) {
+  padding: 5px 7px;
 }
 
 .qr__foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
+  flex-wrap: wrap;
   padding: 12px 20px;
   border-top: 1px solid var(--nat-border);
   background: #fbfcfe;
+}
+
+.qr__foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.qr__foot-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .spacer {
@@ -311,6 +364,6 @@ watch(
 .qr__dirty {
   color: #ea8a04;
   font-size: 12px;
-  margin-right: 6px;
+  line-height: 1.45;
 }
 </style>

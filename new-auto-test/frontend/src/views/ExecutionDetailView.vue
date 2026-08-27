@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { cancelTask, rerunTask } from '@/api/tasks'
 import { toastError, toastOk } from '@/api/http'
 import { SSE_STATE_TEXT } from '@/api/sse'
 import { useExecutionLog } from '@/composables/useExecutionLog'
-import { durationBetween, formatBytes, formatFullTime } from '@/utils/format'
-import { CONDITION_OPERATOR_LABEL, isTerminal, statusMeta } from '@/utils/status'
+import { durationBetween, formatFullTime } from '@/utils/format'
+import { CONDITION_OPERATOR_LABEL, isTerminal } from '@/utils/status'
 import CopyableId from '@/components/CopyableId.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LogTerminal from '@/components/LogTerminal.vue'
@@ -36,12 +36,19 @@ const {
 } = useExecutionLog(executeId)
 
 const acting = ref('')
+const detailOpen = ref(true)
+const lastLineOpen = ref(false)
 
 const envEntries = computed(() => Object.entries(execution.value?.env ?? {}))
 
 const duration = computed(() =>
   durationBetween(execution.value?.startedAt, execution.value?.finishedAt ?? null),
 )
+
+const machine = computed(() => execution.value?.displayTag || execution.value?.agentId || '')
+
+const lastLine = computed(() => execution.value?.lastLine ?? '')
+const lastLineLong = computed(() => lastLine.value.length > 120)
 
 const judgement = computed(() => {
   const exec = execution.value
@@ -54,6 +61,52 @@ const judgement = computed(() => {
       : `未配置判定：exitCode == ${exec.exitCode ?? '未知'}，判为 fail`
   }
   return '按 conditionConfig 对最后一行匹配得出'
+})
+
+const sseTone = computed(() => {
+  if (finished.value) return 'done'
+  return sseState.value === 'open' ? 'live' : 'warn'
+})
+
+const logFootNote = computed(() => (finished.value ? '执行已结束' : 'SSE 断线自动续传'))
+
+/* 日志是这个页面的主体：概要多高，日志就占掉剩下的首屏高度 */
+const summaryRef = ref<HTMLElement | null>(null)
+const logHost = ref<HTMLElement | null>(null)
+const logHeight = ref('60vh')
+/** 底部留一条缝，提示下面还有「执行明细」 */
+const BOTTOM_GAP = 44
+
+function syncLogHeight() {
+  const host = logHost.value
+  if (!host) return
+  const scroller = host.closest('.content') as HTMLElement | null
+  const available = scroller ? scroller.clientHeight : window.innerHeight
+  const top = scroller
+    ? host.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+    : host.getBoundingClientRect().top
+  logHeight.value = `${Math.max(320, Math.round(available - top - BOTTOM_GAP))}px`
+}
+
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  syncLogHeight()
+  ro = new ResizeObserver(() => syncLogHeight())
+  if (summaryRef.value) ro.observe(summaryRef.value)
+  window.addEventListener('resize', syncLogHeight)
+})
+
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
+  window.removeEventListener('resize', syncLogHeight)
+})
+
+watch([execution, error], () => {
+  void nextTick(() => {
+    if (summaryRef.value && ro) ro.observe(summaryRef.value)
+    syncLogHeight()
+  })
 })
 
 async function onCancel() {
@@ -119,82 +172,71 @@ async function onRerun(mode: 'inplace' | 'new') {
   }
 }
 
-const logFootNote = computed(() => {
-  const parts: string[] = [`实时通道：${SSE_STATE_TEXT[sseState.value]}`]
-  if (clientTrimmed.value) parts.push(`前端已丢弃最早 ${clientTrimmed.value} 行`)
-  if (finished.value) parts.push('执行已结束')
-  return parts.join(' · ')
-})
-
 watch(executeId, () => {
   acting.value = ''
+  lastLineOpen.value = false
 })
 </script>
 
 <template>
-  <div class="page">
-    <div class="page-head">
-      <div>
-        <div class="crumb">
-          <button class="link-btn" @click="router.back()">
-            <el-icon><ArrowLeft /></el-icon>
-            返回
-          </button>
-          <span class="muted">/</span>
-          <router-link to="/tasks" class="link-btn">任务队列</router-link>
-          <span class="muted">/</span>
-          <span class="muted">执行详情</span>
-        </div>
-        <h2 class="page-head__title">
-          执行详情
-          <StatusPill
-            v-if="execution"
-            :status="status"
-            size="large"
-            :disconnected="execution.disconnected"
-            class="ml10"
-          />
-        </h2>
-        <p class="page-head__desc">
-          executeId <CopyableId :value="executeId" :short="false" />
-        </p>
-      </div>
-      <div class="page-head__actions">
-        <el-button :icon="'Refresh'" :loading="loading" @click="reload">刷新</el-button>
-        <el-button
-          :icon="'Histogram'"
-          @click="router.push({ path: '/timeline', query: { executeId } })"
-        >
-          时间线
-        </el-button>
-        <el-button
-          v-if="execution?.taskId"
-          type="danger"
-          plain
-          :disabled="isTerminal(status)"
-          :loading="acting === 'cancel'"
-          @click="onCancel"
-        >
-          取消执行
-        </el-button>
-        <el-dropdown v-if="execution?.taskId" trigger="click">
-          <el-button type="primary" plain>
-            重跑
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item :disabled="!isTerminal(status)" @click="onRerun('inplace')">
-                原地重跑（清空记录）
-              </el-dropdown-item>
-              <el-dropdown-item @click="onRerun('new')">重跑为新记录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </div>
-    </div>
+  <div class="page exec">
+    <header class="exec__head">
+      <nav class="exec__crumb">
+        <button class="exec__back" @click="router.back()">
+          <el-icon><ArrowLeft /></el-icon>
+          返回
+        </button>
+        <span class="exec__sep">/</span>
+        <router-link to="/tasks" class="link-btn">任务队列</router-link>
+        <span class="exec__sep">/</span>
+        <span class="muted">执行详情</span>
+      </nav>
 
-    <el-alert v-if="error && execution" type="error" show-icon :closable="false" :title="error" class="mb14" />
+      <div class="exec__title-row">
+        <h2 class="exec__title"><CopyableId :value="executeId" :short="false" /></h2>
+        <StatusPill
+          v-if="execution"
+          :status="status"
+          size="large"
+          :disconnected="execution.disconnected"
+        />
+        <div class="exec__actions">
+          <el-button size="small" :icon="'Refresh'" :loading="loading" @click="reload">刷新</el-button>
+          <el-button
+            size="small"
+            :icon="'Histogram'"
+            @click="router.push({ path: '/timeline', query: { executeId } })"
+          >
+            时间线
+          </el-button>
+          <el-button
+            v-if="execution?.taskId"
+            size="small"
+            type="danger"
+            plain
+            :disabled="isTerminal(status)"
+            :loading="acting === 'cancel'"
+            @click="onCancel"
+          >
+            取消
+          </el-button>
+          <el-dropdown v-if="execution?.taskId" trigger="click">
+            <el-button size="small" type="primary" plain>
+              重跑
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :disabled="!isTerminal(status)" @click="onRerun('inplace')">
+                  原地重跑（清空记录）
+                </el-dropdown-item>
+                <el-dropdown-item @click="onRerun('new')">重跑为新记录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </div>
+    </header>
 
     <EmptyState
       v-if="!execution && !loading && error"
@@ -207,238 +249,340 @@ watch(executeId, () => {
     </EmptyState>
 
     <template v-else>
-      <div class="panel">
+      <section ref="summaryRef" class="panel exec__sum">
+        <el-skeleton v-if="loading && !execution" :rows="2" animated />
+        <template v-else-if="execution">
+          <dl class="facts">
+            <div class="facts__i">
+              <dt>退出码</dt>
+              <dd class="mono" :class="{ 'is-bad': (execution.exitCode ?? 0) !== 0 }">
+                {{ execution.exitCode ?? '-' }}
+              </dd>
+            </div>
+            <div class="facts__i">
+              <dt>耗时</dt>
+              <dd class="mono">{{ duration }}</dd>
+            </div>
+            <div class="facts__i">
+              <dt>机器</dt>
+              <dd>
+                <router-link
+                  v-if="machine"
+                  class="link-btn"
+                  :to="{ path: '/agents', query: { focus: machine } }"
+                >
+                  {{ machine }}
+                </router-link>
+                <span v-else class="muted">未分配</span>
+              </dd>
+            </div>
+            <div class="facts__i">
+              <dt>开始</dt>
+              <dd class="mono">{{ formatFullTime(execution.startedAt) }}</dd>
+            </div>
+          </dl>
+
+          <div class="cmd-box">
+            <span class="cmd-box__label">命令</span>
+            <pre class="cmd-box__pre mono">{{ execution.command || '-' }}</pre>
+          </div>
+
+          <p v-if="execution.message" class="note">{{ execution.message }}</p>
+          <p v-if="execution.disconnected && !isTerminal(status)" class="note">
+            机器失联中，仍属 running；租约到期且对账确认进程不在时判为 exception。
+          </p>
+        </template>
+      </section>
+
+      <div ref="logHost" class="exec__log" :style="{ height: logHeight }">
+        <LogTerminal
+          :lines="lines"
+          :truncated="truncated"
+          :dropped-bytes="droppedBytes"
+          :total-bytes="totalBytes"
+          :client-trimmed="clientTrimmed"
+          :loading="logLoading"
+          :error-text="error"
+          height="fill"
+          :file-name="`${executeId}.log`"
+          :foot-note="logFootNote"
+          @retry="reload"
+        >
+          <template #bar>
+            <span class="sse" :class="`sse--${sseTone}`">
+              {{ finished ? '已结束' : SSE_STATE_TEXT[sseState] }}
+            </span>
+            <button v-if="!finished && sseState !== 'open'" class="sse__btn" @click="reconnect">
+              重连
+            </button>
+          </template>
+        </LogTerminal>
+      </div>
+
+      <section v-if="execution" class="panel">
         <div class="panel__head">
-          <div class="panel__title">
-            执行概要
-            <span class="hint">
-              <template v-if="execution?.displayTag || execution?.agentId">
-                机器 {{ execution?.displayTag || execution?.agentId }}
-              </template>
-            </span>
-          </div>
-          <div class="badges">
-            <span class="badge" :style="{ borderColor: statusMeta(status).border }">
-              <span class="badge__k">结果</span>
-              <StatusPill :status="status" :disconnected="execution?.disconnected" />
-            </span>
-            <span class="badge">
-              <span class="badge__k">退出码</span>
-              <b class="mono" :class="{ 'is-bad': (execution?.exitCode ?? 0) !== 0 }">
-                {{ execution?.exitCode ?? '-' }}
-              </b>
-            </span>
-            <span class="badge">
-              <span class="badge__k">耗时</span>
-              <b class="mono">{{ duration }}</b>
-            </span>
-            <span class="badge">
-              <span class="badge__k">日志</span>
-              <b class="mono">{{ lines.length }} 行{{ totalBytes ? ` / ${formatBytes(totalBytes)}` : '' }}</b>
-            </span>
-          </div>
+          <div class="panel__title">执行明细</div>
+          <button class="link-btn" @click="detailOpen = !detailOpen">
+            {{ detailOpen ? '收起' : '展开' }}
+          </button>
         </div>
-
-        <div class="panel__body">
-          <el-skeleton v-if="loading && !execution" :rows="4" animated />
-          <template v-else-if="execution">
-            <div class="cmd-box">
-              <div class="cmd-box__label">命令</div>
-              <pre class="cmd-box__pre mono">{{ execution.command || '-' }}</pre>
+        <div v-show="detailOpen" class="panel__body">
+          <div class="meta-grid">
+            <div class="kv">
+              <span class="kv__k">agentId</span>
+              <span class="kv__v"><CopyableId :value="execution.agentId" :head="12" /></span>
+              <span class="kv__k">taskId</span>
+              <span class="kv__v"><CopyableId :value="execution.taskId" :head="12" /></span>
+              <span class="kv__k">dispatchToken</span>
+              <span class="kv__v"><CopyableId :value="execution.dispatchToken" :head="12" /></span>
+              <span class="kv__k">operator</span>
+              <span class="kv__v">{{ execution.operator || '-' }}</span>
             </div>
 
-            <div class="meta-grid">
-              <div class="kv">
-                <span class="kv__k">机器</span>
-                <span class="kv__v">
-                  <router-link
-                    v-if="execution.agentId"
-                    class="link-btn"
-                    :to="{ path: '/agents', query: { focus: execution.displayTag || execution.agentId } }"
-                  >
-                    {{ execution.displayTag || execution.agentId }}
-                  </router-link>
-                  <span v-else class="muted">-</span>
-                </span>
-                <span class="kv__k">agentId</span>
-                <span class="kv__v"><CopyableId :value="execution.agentId" :head="12" /></span>
-                <span class="kv__k">taskId</span>
-                <span class="kv__v"><CopyableId :value="execution.taskId" :head="12" /></span>
-                <span class="kv__k">dispatchToken</span>
-                <span class="kv__v"><CopyableId :value="execution.dispatchToken" :head="12" /></span>
-              </div>
-
-              <div class="kv">
-                <span class="kv__k">cwd</span>
-                <span class="kv__v mono">{{ execution.cwd || '（Agent 默认）' }}</span>
-                <span class="kv__k">operator</span>
-                <span class="kv__v">{{ execution.operator || '-' }}</span>
-                <span class="kv__k">超时</span>
-                <span class="kv__v">{{ execution.timeoutSec ? `${execution.timeoutSec}s` : '-' }}</span>
-                <span class="kv__k">最后一行</span>
-                <span class="kv__v mono">{{ execution.lastLine || '-' }}</span>
-              </div>
-
-              <div class="kv">
-                <span class="kv__k">创建</span>
-                <span class="kv__v">{{ formatFullTime(execution.createdAt) }}</span>
-                <span class="kv__k">开始</span>
-                <span class="kv__v">{{ formatFullTime(execution.startedAt) }}</span>
-                <span class="kv__k">结束</span>
-                <span class="kv__v">{{ formatFullTime(execution.finishedAt) }}</span>
-                <span class="kv__k">判定依据</span>
-                <span class="kv__v">{{ judgement }}</span>
-              </div>
+            <div class="kv">
+              <span class="kv__k">cwd</span>
+              <span class="kv__v mono">{{ execution.cwd || '（Agent 默认）' }}</span>
+              <span class="kv__k">超时</span>
+              <span class="kv__v">{{ execution.timeoutSec ? `${execution.timeoutSec}s` : '-' }}</span>
+              <span class="kv__k">创建</span>
+              <span class="kv__v mono">{{ formatFullTime(execution.createdAt) }}</span>
+              <span class="kv__k">结束</span>
+              <span class="kv__v mono">{{ formatFullTime(execution.finishedAt) }}</span>
             </div>
 
-            <div v-if="envEntries.length" class="chips">
-              <span class="chips__label">环境变量</span>
-              <code v-for="[k, v] in envEntries" :key="k" class="code-inline">{{ k }}={{ v }}</code>
+            <div class="kv">
+              <span class="kv__k">判定依据</span>
+              <span class="kv__v">{{ judgement }}</span>
             </div>
+          </div>
 
-            <div v-if="execution.conditionConfig" class="chips">
-              <span class="chips__label">判定配置</span>
-              <span
-                v-for="(rule, i) in execution.conditionConfig.rules"
-                :key="i"
-                class="rule"
-              >
+          <div class="block">
+            <div class="block__k">最后一行</div>
+            <pre class="block__v mono" :class="{ 'is-clamp': !lastLineOpen }">{{ lastLine || '-' }}</pre>
+            <button v-if="lastLineLong" class="link-btn" @click="lastLineOpen = !lastLineOpen">
+              {{ lastLineOpen ? '收起' : '展开' }}
+            </button>
+          </div>
+
+          <div v-if="envEntries.length" class="block">
+            <div class="block__k">环境变量</div>
+            <div class="chips">
+              <code v-for="[k, v] in envEntries" :key="k" class="code-inline chip">{{ k }}={{ v }}</code>
+            </div>
+          </div>
+
+          <div v-if="execution.conditionConfig" class="block">
+            <div class="block__k">判定配置</div>
+            <div class="chips">
+              <span v-for="(rule, i) in execution.conditionConfig.rules" :key="i" class="rule">
                 {{ i + 1 }}. {{ CONDITION_OPERATOR_LABEL[rule.operator] }}
-                <code class="code-inline">{{ rule.value }}</code>
+                <code class="code-inline chip">{{ rule.value }}</code>
                 → <StatusPill :status="rule.status" />
               </span>
               <span v-if="execution.conditionConfig.other" class="rule">
                 other → <StatusPill :status="execution.conditionConfig.other" />
               </span>
             </div>
-
-            <el-alert
-              v-if="execution.message"
-              class="mt10"
-              type="warning"
-              :closable="false"
-              show-icon
-              :title="execution.message"
-            />
-
-            <el-alert
-              v-if="execution.disconnected && !isTerminal(status)"
-              class="mt10"
-              type="warning"
-              :closable="false"
-              show-icon
-              title="该机器当前失联（running 的子状态 disconnected），不是终态；租约到期且对账确认进程不在时会判为 exception。"
-            />
-          </template>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel__head">
-          <div class="panel__title">
-            实时日志
-            <span class="hint">末 5MB 尾部保留 · SSE 断线自动续传（Last-Event-ID）</span>
-          </div>
-          <div class="log-actions">
-            <el-tag size="small" :type="sseState === 'open' ? 'success' : finished ? 'info' : 'warning'" round>
-              {{ finished ? '已结束' : SSE_STATE_TEXT[sseState] }}
-            </el-tag>
-            <el-button v-if="!finished && sseState !== 'open'" size="small" text type="primary" @click="reconnect">
-              立即重连
-            </el-button>
           </div>
         </div>
-        <div class="panel__body">
-          <LogTerminal
-            :lines="lines"
-            :truncated="truncated"
-            :dropped-bytes="droppedBytes"
-            :total-bytes="totalBytes"
-            :loading="logLoading"
-            height="560px"
-            :file-name="`${executeId}.log`"
-            :foot-note="logFootNote"
-          />
-        </div>
-      </div>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.crumb {
+/* 页头贴顶，日志区在首屏就能看到 */
+.exec__head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: -18px -22px 12px;
+  padding: 12px 22px 10px;
+  background: var(--nat-bg);
+  border-bottom: 1px solid var(--nat-border);
+}
+
+.exec__crumb {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
-.ml10 {
-  margin-left: 10px;
-  vertical-align: middle;
+.exec__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--nat-accent);
+  cursor: pointer;
 }
 
-.mb14 {
-  margin-bottom: 14px;
+.exec__back:hover {
+  text-decoration: underline;
 }
 
-.mt10 {
-  margin-top: 10px;
+.exec__sep {
+  color: var(--nat-text-weak);
 }
 
-.badges {
+.exec__title-row {
   display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.exec__title {
+  margin: 0;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.exec__title :deep(.copyable__text) {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--nat-text);
+  letter-spacing: 0.2px;
+}
+
+.exec__title :deep(.copyable__btn) {
+  width: 18px;
+  height: 18px;
+}
+
+.exec__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
+.exec__sum {
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.exec__log {
+  min-height: 320px;
+  margin-bottom: 12px;
+}
+
+.facts {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 0 0 10px;
+}
+
+.facts__i {
+  display: flex;
+  align-items: baseline;
   gap: 6px;
-  border: 1px solid var(--nat-border);
-  border-radius: 8px;
-  padding: 4px 10px;
-  background: #fbfcfe;
+  min-width: 0;
 }
 
-.badge__k {
+.facts dt {
   color: var(--nat-text-weak);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
-.badge b {
+.facts dd {
+  margin: 0;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
-.badge b.is-bad {
+.facts dd.is-bad {
   color: #dc2626;
+  font-weight: 600;
 }
 
 .cmd-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   border: 1px solid var(--nat-border);
   border-radius: 8px;
-  overflow: hidden;
-  margin-bottom: 14px;
+  padding: 6px 10px;
+  background: #fafbfd;
 }
 
 .cmd-box__label {
-  background: #f7f9fc;
-  border-bottom: 1px solid var(--nat-border);
-  padding: 5px 10px;
-  font-size: 12px;
+  flex: none;
   color: var(--nat-text-weak);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .cmd-box__pre {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  padding: 10px 12px;
+  /* 长脚本不能顶掉首屏的日志 */
+  max-height: 64px;
+  overflow: auto;
   font-size: 12.5px;
   line-height: 1.7;
   white-space: pre-wrap;
-  word-break: break-all;
-  background: #fff;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #fff8e6;
+  border: 1px solid #f5dfa6;
+  color: #8a6100;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sse {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: #8b949e;
+}
+
+.sse::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sse--live {
+  color: #3fb950;
+}
+
+.sse--warn {
+  color: #d29922;
+}
+
+.sse__btn {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  border-radius: 6px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.sse__btn:hover {
+  background: #30363d;
 }
 
 .meta-grid {
@@ -447,33 +591,56 @@ watch(executeId, () => {
   gap: 12px 26px;
 }
 
+.block {
+  margin-top: 14px;
+}
+
+.block__k {
+  color: var(--nat-text-weak);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.block__v {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.block__v.is-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
 .chips {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
 }
 
-.chips__label {
-  color: var(--nat-text-weak);
-  font-size: 12px;
+/* JWT 之类不可断词的长值不能把页面撑出横向滚动 */
+.chip {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .rule {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: 100%;
   font-size: 12px;
   color: var(--nat-text-sub);
   border: 1px dashed var(--nat-border-strong);
   border-radius: 6px;
   padding: 2px 8px;
-}
-
-.log-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 </style>

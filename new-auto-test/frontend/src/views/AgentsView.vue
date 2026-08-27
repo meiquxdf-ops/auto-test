@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { restartAgent, stopAgent, updateAgent } from '@/api/agents'
@@ -8,7 +8,6 @@ import { getTimeline } from '@/api/timeline'
 import type { Agent, AgentStatus, TimelineEvent } from '@/api/types'
 import { useAgents } from '@/stores/agents'
 import { formatFullTime, fromNow, shortId } from '@/utils/format'
-import { AGENT_STATUS_META } from '@/utils/status'
 import AgentInstallDrawer from '@/components/AgentInstallDrawer.vue'
 import AgentStatusLight from '@/components/AgentStatusLight.vue'
 import CopyableId from '@/components/CopyableId.vue'
@@ -45,11 +44,27 @@ const stats = computed(() => {
 
 const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
   { value: 'all', label: '全部状态' },
-  { value: 'online', label: '在线（空闲）' },
+  { value: 'online', label: '在线' },
   { value: 'busy', label: '忙碌' },
   { value: 'disconnected', label: '失联' },
   { value: 'offline', label: '离线' },
 ]
+
+/* ------------------------------------------------------ 响应式列显示 */
+
+/** 侧边导航 216px + 页面留白约 260px，够放下的列才显示，避免整表横向滚动 */
+const viewport = ref(window.innerWidth)
+
+function onResize() {
+  viewport.value = window.innerWidth
+}
+
+onMounted(() => window.addEventListener('resize', onResize, { passive: true }))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+const showExec = computed(() => viewport.value >= 1100)
+const showIp = computed(() => viewport.value >= 1280)
+const showVersion = computed(() => viewport.value >= 1400)
 
 /* ---------------------------------------------------------------- 编辑 */
 
@@ -131,6 +146,10 @@ async function changeConcurrency(agent: Agent, value: number) {
 /* ---------------------------------------------------------------- 危险操作 */
 
 const acting = ref<string>('')
+
+function isActing(agent: Agent): boolean {
+  return acting.value.endsWith(`:${agent.agentId}`)
+}
 
 async function onRestart(agent: Agent) {
   const name = agent.displayTag || agent.agentId
@@ -257,7 +276,10 @@ function rowClass({ row }: { row: Agent }) {
         <h2 class="page-head__title">机器</h2>
         <p class="page-head__desc">
           共 {{ agents.length }} 台 · 在线 {{ stats.online + stats.busy }} · 失联 {{ stats.disconnected }} · 离线
-          {{ stats.offline }}；状态经 <code class="code-inline">/api/sse/agents</code> 实时推送（{{ sseState === 'open' ? '已连接' : '未连接' }}）
+          {{ stats.offline }}
+          <span class="sse" :class="{ 'is-on': sseState === 'open' }">
+            {{ sseState === 'open' ? '实时推送中' : '推送未连接' }}
+          </span>
         </p>
       </div>
       <div class="page-head__actions">
@@ -270,21 +292,16 @@ function rowClass({ row }: { row: Agent }) {
       <div class="toolbar">
         <el-input
           v-model="keyword"
-          placeholder="搜索 tag / agentId / IP / 版本"
+          placeholder="搜索机器名 / agentId / IP"
           clearable
           :prefix-icon="'Search'"
-          style="width: 280px"
+          class="toolbar__search"
         />
-        <el-select v-model="statusFilter" style="width: 150px">
+        <el-select v-model="statusFilter" style="width: 128px">
           <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
-        <div class="legend">
-          <span v-for="(meta, key) in AGENT_STATUS_META" :key="key" class="legend__item">
-            <i class="legend__dot" :style="{ background: meta.color }" />{{ meta.label }}
-          </span>
-        </div>
         <span class="spacer" />
-        <span class="muted">显示 {{ filtered.length }} / {{ agents.length }}</span>
+        <span class="muted">{{ filtered.length }} / {{ agents.length }}</span>
       </div>
 
       <el-alert v-if="error && agents.length" type="error" :closable="false" show-icon :title="error" />
@@ -296,18 +313,20 @@ function rowClass({ row }: { row: Agent }) {
         size="default"
         row-key="agentId"
       >
-        <el-table-column label="状态" width="118" fixed>
+        <el-table-column label="状态" width="96">
           <template #default="{ row }">
             <AgentStatusLight :status="row.status" />
           </template>
         </el-table-column>
 
-        <el-table-column label="机器名 / tag" min-width="190" fixed>
+        <el-table-column label="机器名" min-width="220">
           <template #default="{ row }">
             <div class="tag-cell">
-              <button class="tag-cell__name link-btn" @click="openTimeline(row)">
-                {{ row.displayTag || '（未命名）' }}
-              </button>
+              <el-tooltip :content="row.displayTag || row.agentId" placement="top-start" :show-after="500">
+                <button class="tag-cell__name link-btn" @click="openTimeline(row)">
+                  {{ row.displayTag || '（未命名）' }}
+                </button>
+              </el-tooltip>
               <el-tooltip content="改名" placement="top">
                 <el-icon class="tag-cell__edit" @click.stop="openEdit(row)"><EditPen /></el-icon>
               </el-tooltip>
@@ -316,7 +335,7 @@ function rowClass({ row }: { row: Agent }) {
           </template>
         </el-table-column>
 
-        <el-table-column label="并发" width="200">
+        <el-table-column label="并发" width="150">
           <template #default="{ row }">
             <div class="conc">
               <el-tooltip
@@ -345,7 +364,7 @@ function rowClass({ row }: { row: Agent }) {
           </template>
         </el-table-column>
 
-        <el-table-column label="运行中执行" min-width="170">
+        <el-table-column v-if="showExec" label="运行中执行" min-width="160">
           <template #default="{ row }">
             <div v-if="row.runningExecuteIds.length" class="exec-links">
               <router-link
@@ -360,92 +379,96 @@ function rowClass({ row }: { row: Agent }) {
                 +{{ row.runningExecuteIds.length - 3 }}
               </span>
             </div>
-            <span v-else-if="row.running > 0" class="muted">{{ row.running }} 条（未返回 ID）</span>
+            <span v-else-if="row.running > 0" class="muted">{{ row.running }} 条</span>
             <span v-else class="muted">空闲</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="版本" width="100">
+        <el-table-column v-if="showVersion" label="版本" width="110">
           <template #default="{ row }">
-            <span class="mono sub">{{ row.version || '-' }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="IP" width="130">
-          <template #default="{ row }">
-            <span class="mono sub">{{ row.ip || '-' }}</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="最后心跳" width="130">
-          <template #default="{ row }">
-            <el-tooltip :content="formatFullTime(row.lastSeenAt)" placement="top">
-              <span class="sub">{{ fromNow(row.lastSeenAt) }}</span>
+            <el-tooltip :disabled="!row.version" :content="row.version" placement="top" :show-after="400">
+              <span class="mono sub cell-1">{{ row.version || '-' }}</span>
             </el-tooltip>
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="290" fixed="right" align="right">
+        <el-table-column v-if="showIp" label="IP" width="150">
           <template #default="{ row }">
-            <el-button size="small" text type="primary" @click="openTimeline(row)">时间线</el-button>
-            <el-button
-              size="small"
-              text
-              :loading="acting === `stop:${row.agentId}`"
-              :disabled="row.status === 'offline'"
-              @click="onStop(row)"
-            >
-              停止任务
-            </el-button>
-            <el-button
-              size="small"
-              text
-              type="danger"
-              :loading="acting === `restart:${row.agentId}`"
-              :disabled="row.status === 'offline'"
-              :title="row.status === 'offline' ? '离线无法远程重启。新机器请在目标机上跑 deploy/install.sh，不要点这里。' : ''"
-              @click="onRestart(row)"
-            >
-              重启 Agent
-            </el-button>
+            <el-tooltip :disabled="!row.ip" :content="row.ip" placement="top" :show-after="400">
+              <span class="mono sub cell-1">{{ row.ip || '-' }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="最后心跳" width="120">
+          <template #default="{ row }">
+            <el-tooltip :content="formatFullTime(row.lastSeenAt)" placement="top">
+              <span class="sub cell-1">{{ fromNow(row.lastSeenAt) }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="96" align="right">
+          <template #default="{ row }">
+            <div class="ops">
+              <el-tooltip content="时间线" placement="top">
+                <el-button size="small" text :icon="'Histogram'" @click="openTimeline(row)" />
+              </el-tooltip>
+              <el-dropdown trigger="click" placement="bottom-end">
+                <el-button size="small" text :icon="'MoreFilled'" :loading="isActing(row)" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item :icon="'EditPen'" @click="openEdit(row)">改名 / 并发</el-dropdown-item>
+                    <el-dropdown-item
+                      divided
+                      :icon="'VideoPause'"
+                      :disabled="row.status === 'offline'"
+                      @click="onStop(row)"
+                    >
+                      停止任务
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      :icon="'RefreshRight'"
+                      :disabled="row.status === 'offline'"
+                      @click="onRestart(row)"
+                    >
+                      重启 Agent
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
 
-      <EmptyState
-        v-else-if="loading"
-        title="正在加载机器列表…"
-        size="small"
-      />
+      <EmptyState v-else-if="loading" title="正在加载机器列表…" size="small" />
       <EmptyState
         v-else-if="agents.length"
         variant="search"
         title="没有匹配的机器"
-        desc="换个关键字或清空筛选条件试试"
+        desc="换个关键字或清空筛选试试"
       >
         <el-button size="small" @click="((keyword = ''), (statusFilter = 'all'))">清空筛选</el-button>
       </EmptyState>
       <EmptyState v-else-if="error" variant="error" title="机器列表加载失败" :desc="error">
         <el-button size="small" @click="refresh">重试</el-button>
       </EmptyState>
-      <EmptyState
-        v-else
-        title="还没有机器接入"
-        desc="Agent 安装后会自动向 Server 注册（TCP :9800），注册成功即出现在这里"
-      >
+      <EmptyState v-else title="还没有机器接入" desc="装好 Agent 会自动注册（TCP :9800），随后出现在这里">
         <el-button size="small" type="primary" :icon="'Plus'" @click="installVisible = true">安装 Agent</el-button>
         <el-button size="small" :icon="'Refresh'" @click="refresh">重新加载</el-button>
       </EmptyState>
     </div>
 
     <!-- 改名 / 改并发 -->
-    <el-dialog v-model="editVisible" title="编辑机器" width="480px">
-      <el-form label-width="92px">
+    <el-dialog v-model="editVisible" title="编辑机器" :width="'min(480px, calc(100vw - 32px))'">
+      <el-form label-width="80px" class="edit-form">
         <el-form-item label="agentId">
-          <span class="mono sub">{{ editForm.agentId }}</span>
+          <span class="mono sub edit-form__id">{{ editForm.agentId }}</span>
         </el-form-item>
-        <el-form-item label="机器名 tag" :error="tagError || undefined">
+        <el-form-item label="机器名" :error="tagError || undefined">
           <el-input v-model="editForm.displayTag" placeholder="例如 perf-node-01" spellcheck="false" />
+          <div class="form-hint">全局唯一，重名会被 Server 拒绝</div>
         </el-form-item>
         <el-form-item label="最大并发">
           <el-input-number
@@ -455,12 +478,11 @@ function rowClass({ row }: { row: Agent }) {
             :disabled="!canEditConcurrency"
             controls-position="right"
           />
-          <div class="muted" style="margin-left: 10px">
-            {{ canEditConcurrency ? '范围 1 - 4' : `当前有 ${editForm.running} 条执行在跑，空闲后才能修改` }}
+          <div class="form-hint">
+            {{ canEditConcurrency ? '范围 1 - 4' : `有 ${editForm.running} 条执行在跑，空闲后才能改` }}
           </div>
         </el-form-item>
       </el-form>
-      <div class="muted">机器名全局唯一，可与 agentId 互相解析；重名会被 Server 拒绝。</div>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" :disabled="!!tagError" @click="saveEdit">保存</el-button>
@@ -471,33 +493,35 @@ function rowClass({ row }: { row: Agent }) {
     <AgentInstallDrawer v-model="installVisible" :agents="agents" @refresh="refresh" />
 
     <!-- 机器时间线 -->
-    <el-drawer v-model="drawerVisible" size="720px" :with-header="false">
+    <el-drawer v-model="drawerVisible" :size="'min(720px, 100vw)'" :with-header="false">
       <div class="drawer">
         <div class="drawer__head">
-          <div>
+          <div class="drawer__ident">
             <div class="drawer__title">
-              {{ drawerAgent?.displayTag || drawerAgent?.agentId }}
+              <span class="drawer__name">{{ drawerAgent?.displayTag || drawerAgent?.agentId }}</span>
               <AgentStatusLight v-if="drawerAgent" :status="drawerAgent.status" />
             </div>
             <div class="drawer__sub mono">{{ drawerAgent?.agentId }}</div>
           </div>
           <div class="drawer__actions">
             <el-button size="small" :icon="'Refresh'" :loading="drawerLoading" @click="loadDrawer">刷新</el-button>
-            <el-button size="small" type="primary" plain @click="gotoFullTimeline">在时间线页打开</el-button>
+            <el-button size="small" type="primary" plain @click="gotoFullTimeline">全部时间线</el-button>
             <el-button size="small" text :icon="'Close'" @click="drawerVisible = false" />
           </div>
         </div>
 
         <div v-if="drawerAgent" class="drawer__meta">
           <div class="kv">
+            <span class="kv__k">并发</span>
+            <span class="kv__v">{{ drawerAgent.running }} / {{ drawerAgent.concurrency }}</span>
+            <span class="kv__k">IP / 版本</span>
+            <span class="kv__v mono">{{ drawerAgent.ip || '-' }} · {{ drawerAgent.version || '-' }}</span>
+            <span class="kv__k">最后心跳</span>
+            <span class="kv__v">{{ formatFullTime(drawerAgent.lastSeenAt) }}</span>
             <span class="kv__k">session</span>
             <span class="kv__v"><CopyableId :value="drawerAgent.sessionId" :head="12" /></span>
             <span class="kv__k">bootId</span>
             <span class="kv__v"><CopyableId :value="drawerAgent.bootId" :head="12" /></span>
-            <span class="kv__k">并发</span>
-            <span class="kv__v">{{ drawerAgent.running }} / {{ drawerAgent.concurrency }}</span>
-            <span class="kv__k">最后心跳</span>
-            <span class="kv__v">{{ formatFullTime(drawerAgent.lastSeenAt) }}</span>
           </div>
         </div>
 
@@ -516,33 +540,53 @@ function rowClass({ row }: { row: Agent }) {
   flex: 1;
 }
 
-.legend {
-  display: flex;
-  gap: 12px;
-  margin-left: 4px;
-}
-
-.legend__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
+.sse {
+  margin-left: 8px;
   color: var(--nat-text-weak);
 }
 
-.legend__dot {
-  width: 7px;
-  height: 7px;
+.sse::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
   border-radius: 50%;
+  background: var(--nat-text-weak);
+  vertical-align: 1px;
+}
+
+.sse.is-on::before {
+  background: #16a34a;
+}
+
+.toolbar__search {
+  width: 260px;
+  max-width: 100%;
+}
+
+/* 单行省略：表格默认 word-break 会把 IP / 版本从中间折断 */
+.cell-1 {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tag-cell {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .tag-cell__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
   font-weight: 580;
   font-size: 13.5px;
   color: var(--nat-text);
@@ -553,12 +597,30 @@ function rowClass({ row }: { row: Agent }) {
 }
 
 .tag-cell__edit {
+  flex: none;
   color: var(--nat-text-weak);
   cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.tag-cell:hover .tag-cell__edit {
+  opacity: 1;
 }
 
 .tag-cell__edit:hover {
   color: var(--nat-accent);
+}
+
+.ops {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.ops :deep(.el-button) {
+  margin-left: 0;
 }
 
 .conc {
@@ -588,6 +650,20 @@ function rowClass({ row }: { row: Agent }) {
   color: var(--nat-text-weak);
 }
 
+/* 提示文案排在输入框下一行，且不跟着 label 缩进 */
+.form-hint {
+  width: 100%;
+  margin-left: 0;
+  margin-top: 4px;
+  color: var(--nat-text-weak);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.edit-form__id {
+  word-break: break-all;
+}
+
 .drawer {
   display: flex;
   flex-direction: column;
@@ -603,24 +679,46 @@ function rowClass({ row }: { row: Agent }) {
   border-bottom: 1px solid var(--nat-border);
 }
 
+.drawer__ident {
+  flex: 1;
+  min-width: 0;
+}
+
 .drawer__title {
-  font-size: 16px;
-  font-weight: 640;
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 640;
+}
+
+/* 长机器名截断，状态灯紧跟其后而不是被推到最右 */
+.drawer__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__title :deep(.agent-light) {
+  flex: none;
 }
 
 .drawer__sub {
   color: var(--nat-text-weak);
   font-size: 12px;
   margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .drawer__actions {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: none;
 }
 
 .drawer__meta {

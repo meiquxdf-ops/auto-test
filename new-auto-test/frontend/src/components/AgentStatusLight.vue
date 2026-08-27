@@ -14,15 +14,17 @@ const props = withDefaults(
 )
 
 const meta = computed(() => agentStatusMeta(props.status))
-const animated = computed(() => props.status === 'busy' || props.status === 'disconnected')
+
+/** 光晕用同色低透明度画在圆点自身的 box-shadow 上：不给父层设 opacity，圆点始终是实色 */
+const halo = computed(() =>
+  /^#[0-9a-f]{6}$/i.test(meta.value.color) ? `${meta.value.color}33` : meta.value.color,
+)
 </script>
 
 <template>
   <el-tooltip :content="meta.desc" placement="top" :show-after="400">
     <span class="agent-light">
-      <span class="agent-light__ring" :style="{ borderColor: meta.color }">
-        <span class="agent-light__core" :class="{ pulse: animated }" :style="{ background: meta.color }" />
-      </span>
+      <span class="agent-light__dot" :style="{ background: meta.color, boxShadow: `0 0 0 3px ${halo}` }" />
       <span v-if="showLabel" class="agent-light__text" :style="{ color: meta.color }">{{ meta.label }}</span>
       <span v-if="extra" class="agent-light__extra">{{ extra }}</span>
     </span>
@@ -37,22 +39,14 @@ const animated = computed(() => props.status === 'busy' || props.status === 'dis
   white-space: nowrap;
 }
 
-.agent-light__ring {
-  width: 14px;
-  height: 14px;
+/* 左右各留 3px 给光晕，整体仍占 14px，行高不跳 */
+.agent-light__dot {
+  width: 8px;
+  height: 8px;
+  margin: 0 3px;
   border-radius: 50%;
-  border: 1.5px solid;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.55;
   flex: none;
-}
-
-.agent-light__core {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .agent-light__text {

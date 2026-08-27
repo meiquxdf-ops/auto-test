@@ -4,13 +4,13 @@ withDefaults(
     label: string
     value: number | string
     unit?: string
+    /** 语义色，只画在标题前的小圆点上，数字保持中性 */
     color?: string
-    icon?: string
     hint?: string
     loading?: boolean
     to?: string
   }>(),
-  { unit: '', color: '#2563eb', icon: 'DataLine', hint: '', loading: false, to: '' },
+  { unit: '', color: '#64748b', hint: '', loading: false, to: '' },
 )
 </script>
 
@@ -21,82 +21,112 @@ withDefaults(
     class="stat"
     :class="{ 'stat--link': !!to }"
   >
-    <div class="stat__icon" :style="{ background: `${color}14`, color }">
-      <el-icon><component :is="icon" /></el-icon>
+    <div class="stat__label">
+      <span class="stat__dot" :style="{ background: color }" />
+      <span class="stat__label-text">{{ label }}</span>
     </div>
-    <div class="stat__body">
-      <div class="stat__label">{{ label }}</div>
-      <div class="stat__value" :style="{ color }">
-        <el-skeleton v-if="loading" animated :rows="0" style="width: 60px">
-          <template #template><el-skeleton-item variant="text" style="width: 52px; height: 24px" /></template>
-        </el-skeleton>
-        <template v-else>
-          {{ value }}<span v-if="unit" class="stat__unit">{{ unit }}</span>
-        </template>
-      </div>
-      <div v-if="hint" class="stat__hint">{{ hint }}</div>
+
+    <div class="stat__value">
+      <span v-if="loading" class="stat__ph" />
+      <template v-else>
+        {{ value }}<span v-if="unit" class="stat__unit">{{ unit }}</span>
+      </template>
+    </div>
+
+    <!-- 恒定占一行：加载中不显示假数据，也不让 4 张卡片的行高跳动 -->
+    <div class="stat__hint" :title="loading || !hint ? undefined : hint">
+      {{ loading ? '' : hint }}
     </div>
   </component>
 </template>
 
 <style scoped>
 .stat {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  display: block;
+  min-width: 0;
+  padding: 14px 16px 13px;
   background: var(--nat-panel);
   border: 1px solid var(--nat-border);
   border-radius: var(--nat-radius);
-  padding: 14px 16px;
   box-shadow: var(--nat-shadow);
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s, transform 0.15s;
+  transition: border-color 0.16s ease, transform 0.16s ease;
 }
 
 .stat--link:hover {
-  border-color: var(--nat-accent);
+  border-color: var(--nat-border-strong);
   transform: translateY(-1px);
 }
 
-.stat__icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
+.stat__label {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  flex: none;
-}
-
-.stat__body {
+  gap: 6px;
   min-width: 0;
 }
 
-.stat__label {
-  color: var(--nat-text-sub);
+.stat__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.stat__label-text {
   font-size: 12.5px;
+  color: var(--nat-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stat__value {
-  font-size: 24px;
-  font-weight: 660;
-  line-height: 1.3;
-  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  margin-top: 6px;
+  font-size: 28px;
+  font-weight: 640;
+  line-height: 1.2;
+  letter-spacing: -0.2px;
+  color: var(--nat-text);
   font-variant-numeric: tabular-nums;
 }
 
 .stat__unit {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
-  margin-left: 3px;
+  margin-left: 5px;
   color: var(--nat-text-weak);
 }
 
+.stat__ph {
+  display: block;
+  width: 56px;
+  height: 20px;
+  border-radius: 5px;
+  background: #eef1f6;
+}
+
 .stat__hint {
-  color: var(--nat-text-weak);
+  min-height: 16px;
+  margin-top: 4px;
   font-size: 11.5px;
-  margin-top: 3px;
+  line-height: 16px;
+  color: var(--nat-text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat {
+    transition: none;
+  }
+
+  .stat--link:hover {
+    transform: none;
+  }
 }
 </style>

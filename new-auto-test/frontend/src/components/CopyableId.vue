@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { copyText, shortId } from '@/utils/format'
 
@@ -12,6 +13,8 @@ const props = withDefaults(
   { value: '', short: true, head: 8, placeholder: '-' },
 )
 
+const display = computed(() => (props.short ? shortId(props.value, props.head) : props.value || ''))
+
 async function onCopy() {
   if (!props.value) return
   const ok = await copyText(props.value)
@@ -22,10 +25,12 @@ async function onCopy() {
 <template>
   <span v-if="!value" class="muted">{{ placeholder }}</span>
   <span v-else class="copyable">
-    <el-tooltip :content="value" placement="top" :show-after="300">
-      <span class="mono copyable__text">{{ short ? shortId(value, head) : value }}</span>
+    <el-tooltip :content="value" placement="top" :show-after="300" :disabled="!short">
+      <span class="mono copyable__text" :class="{ 'copyable__text--full': !short }">{{ display }}</span>
     </el-tooltip>
-    <el-icon class="copyable__icon" title="复制" @click.stop="onCopy"><DocumentCopy /></el-icon>
+    <button type="button" class="copyable__btn" title="复制" aria-label="复制完整 ID" @click.stop="onCopy">
+      <el-icon><DocumentCopy /></el-icon>
+    </button>
   </span>
 </template>
 
@@ -34,25 +39,60 @@ async function onCopy() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* 表格单元格 overflow:hidden 时先被裁掉的是右侧图标，必须能被压缩 */
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
 }
 
 .copyable__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: var(--nat-text-sub);
 }
 
-.copyable__icon {
-  cursor: pointer;
-  color: var(--nat-text-weak);
-  opacity: 0;
-  transition: opacity 0.15s;
+/* short=false：完整 ID 允许换行，不撑破所在单元格 */
+.copyable__text--full {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
 }
 
-.copyable:hover .copyable__icon {
+.copyable__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--nat-text-weak);
+  /* 触屏没有 hover，常驻低透明度 */
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.copyable:hover .copyable__btn,
+.copyable__btn:focus-visible {
   opacity: 1;
 }
 
-.copyable__icon:hover {
+.copyable__btn:hover {
   color: var(--nat-accent);
+}
+
+.copyable__btn:focus-visible {
+  outline: 1px solid var(--nat-accent);
+  outline-offset: 1px;
+}
+
+.copyable__btn :deep(.el-icon) {
+  font-size: 13px;
 }
 </style>

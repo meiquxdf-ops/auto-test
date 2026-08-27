@@ -11,7 +11,7 @@ const props = withDefaults(
     single?: boolean
     placeholder?: string
   }>(),
-  { single: false, placeholder: '选择目标机器（可搜索 tag / agentId）' },
+  { single: false, placeholder: '搜索 tag / agentId' },
 )
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string[]): void }>()
@@ -62,6 +62,18 @@ const offlineSelected = computed(() =>
   }),
 )
 
+/** 告警只列前几台，避免几十个 tag 把 alert 撑成一大块 */
+const OFFLINE_PREVIEW = 3
+
+const offlineWarn = computed(() => {
+  const all = offlineSelected.value
+  if (!all.length) return ''
+  const head = all.slice(0, OFFLINE_PREVIEW).join('、')
+  const rest = all.length - OFFLINE_PREVIEW
+  const names = rest > 0 ? `${head} 等 ${all.length} 台` : head
+  return `${names} 不在线，任务会排队等待上线`
+})
+
 const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
   { value: 'all', label: '全部状态' },
   { value: 'online', label: '在线' },
@@ -81,7 +93,7 @@ const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
         clearable
         collapse-tags
         collapse-tags-tooltip
-        :max-collapse-tags="6"
+        :max-collapse-tags="1"
         :placeholder="placeholder"
         :loading="loading"
         class="picker__select"
@@ -112,51 +124,89 @@ const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
     <div class="picker__actions">
       <template v-if="!single">
         <el-button size="small" text type="primary" :disabled="!options.length" @click="selectOnline">
-          选中全部在线
+          全部在线
         </el-button>
         <el-button size="small" text type="primary" :disabled="!selectableCount" @click="selectAll">
-          选中全部可用（{{ selectableCount }}）
+          全部可用（{{ selectableCount }}）
         </el-button>
         <el-button size="small" text :disabled="!modelValue.length" @click="clearAll">清空</el-button>
       </template>
-      <el-button size="small" text :icon="'Refresh'" @click="refresh">刷新机器</el-button>
+      <el-button size="small" text :icon="'Refresh'" @click="refresh">刷新</el-button>
       <span class="spacer" />
-      <span class="muted">已选 {{ modelValue.length }} 台</span>
+      <span class="muted picker__count">已选 {{ modelValue.length }} 台</span>
     </div>
 
     <el-alert
-      v-if="offlineSelected.length"
+      v-if="offlineWarn"
       type="warning"
       :closable="false"
       show-icon
       class="picker__warn"
-      :title="`已选机器中有 ${offlineSelected.length} 台不在线（${offlineSelected.join('、')}），任务会先排队等待其上线`"
+      :title="offlineWarn"
     />
   </div>
 </template>
 
 <style scoped>
+.picker {
+  /* 在 el-form-item 里不要收缩成内容宽度 */
+  width: 100%;
+  min-width: 0;
+}
+
 .picker__row {
   display: flex;
+  /* 顶端对齐：选择框换行变高时筛选框不跟着拉伸 */
+  align-items: flex-start;
   gap: 8px;
 }
 
 .picker__select {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
+/* 选中项固定单行：标签可省略号收缩，搜索框始终留出输入位置 */
+.picker__select :deep(.el-select__selection) {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.picker__select :deep(.el-select__selected-item) {
+  min-width: 0;
+}
+
+.picker__select :deep(.el-tag) {
+  max-width: 100%;
+}
+
+.picker__select :deep(.el-select__input-wrapper) {
+  flex: 1 0 36px;
+  min-width: 36px;
+}
+
 .picker__filter {
-  width: 118px;
+  width: 104px;
   flex: none;
 }
 
 .picker__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 4px 6px;
   margin-top: 6px;
   flex-wrap: wrap;
+}
+
+/* 用 gap 控制间距，去掉 Element Plus 相邻按钮的 12px 左边距 */
+.picker__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.picker__count {
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
 }
 
 .spacer {
@@ -167,6 +217,7 @@ const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .picker__dot {
@@ -178,14 +229,26 @@ const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
 
 .picker__name {
   font-weight: 540;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .picker__meta {
   color: var(--nat-text-weak);
   font-size: 12px;
+  margin-left: auto;
+  padding-left: 8px;
+  white-space: nowrap;
 }
 
 .picker__warn {
   margin-top: 8px;
+}
+
+.picker__warn :deep(.el-alert__title) {
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 </style>

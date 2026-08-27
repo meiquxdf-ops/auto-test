@@ -30,12 +30,25 @@ const loadedAt = ref<number | null>(null)
 
 let timer: number | null = null
 
+/** 「按机器」「按执行」缺少 id 时不算一次有效查询，不该拿全量数据充数 */
+const ready = computed(() => {
+  if (mode.value === 'agent') return !!agentId.value
+  if (mode.value === 'execute') return !!executeId.value
+  return true
+})
+
+function routeIds() {
+  return {
+    agentId: typeof route.query.agentId === 'string' ? route.query.agentId : '',
+    executeId: typeof route.query.executeId === 'string' ? route.query.executeId : '',
+  }
+}
+
 function syncFromRoute() {
-  const qAgent = typeof route.query.agentId === 'string' ? route.query.agentId : ''
-  const qExec = typeof route.query.executeId === 'string' ? route.query.executeId : ''
-  agentId.value = qAgent
-  executeId.value = qExec
-  mode.value = qExec ? 'execute' : qAgent ? 'agent' : 'all'
+  const q = routeIds()
+  agentId.value = q.agentId
+  executeId.value = q.executeId
+  mode.value = q.executeId ? 'execute' : q.agentId ? 'agent' : 'all'
 }
 
 function syncToRoute() {
@@ -46,6 +59,12 @@ function syncToRoute() {
 }
 
 async function load() {
+  if (!ready.value) {
+    events.value = []
+    error.value = ''
+    loadedAt.value = null
+    return
+  }
   loading.value = true
   try {
     events.value = await getTimeline({
@@ -72,7 +91,7 @@ onMounted(() => {
   syncFromRoute()
   void load()
   timer = window.setInterval(() => {
-    if (autoRefresh.value) void load()
+    if (autoRefresh.value && !loading.value) void load()
   }, 5000)
 })
 
@@ -83,6 +102,11 @@ onBeforeUnmount(() => {
 watch(
   () => route.fullPath,
   () => {
+    // 自己 replace 出去的地址已经和当前状态一致，只响应外部跳转，避免重复请求
+    const q = routeIds()
+    const sameAgent = q.agentId === (mode.value === 'agent' ? agentId.value : '')
+    const sameExecute = q.executeId === (mode.value === 'execute' ? executeId.value : '')
+    if (sameAgent && sameExecute) return
     syncFromRoute()
     void load()
   },
@@ -115,10 +139,8 @@ const typeList = computed(() => {
 
 function switchMode(next: Mode) {
   mode.value = next
-  if (next === 'all') {
-    agentId.value = ''
-    executeId.value = ''
-  }
+  if (next !== 'agent') agentId.value = ''
+  if (next !== 'execute') executeId.value = ''
   query()
 }
 </script>
@@ -129,7 +151,7 @@ function switchMode(next: Mode) {
       <div>
         <h2 class="page-head__title">时间线</h2>
         <p class="page-head__desc">
-          按 executeId 或 agentId 对账 agent 与 server 两侧事件，左侧 agent 上报、右侧 server 记录
+          按 executeId 或 agentId 对账 agent 与 server 两侧事件
           <template v-if="loadedAt"> · 更新于 {{ formatTime(loadedAt) }}</template>
         </p>
       </div>
@@ -141,69 +163,75 @@ function switchMode(next: Mode) {
 
     <div class="panel">
       <div class="toolbar">
-        <el-radio-group :model-value="mode" size="small" @update:model-value="(v: unknown) => switchMode(v as Mode)">
-          <el-radio-button value="all">全部事件</el-radio-button>
-          <el-radio-button value="agent">按机器</el-radio-button>
-          <el-radio-button value="execute">按执行</el-radio-button>
-        </el-radio-group>
-
-        <el-select
-          v-if="mode === 'agent'"
-          v-model="agentId"
-          filterable
-          clearable
-          placeholder="选择机器"
-          style="width: 260px"
-          @change="query"
-        >
-          <el-option
-            v-for="a in agents"
-            :key="a.agentId"
-            :label="a.displayTag || a.agentId"
-            :value="a.agentId"
+        <div class="toolbar__group">
+          <el-radio-group
+            :model-value="mode"
+            size="small"
+            @update:model-value="(v: unknown) => switchMode(v as Mode)"
           >
-            <span class="opt">
-              <i class="opt__dot" :style="{ background: agentStatusMeta(a.status).color }" />
-              {{ a.displayTag || a.agentId }}
-              <span class="muted">{{ a.agentId.slice(0, 8) }}</span>
-            </span>
-          </el-option>
-        </el-select>
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="agent">按机器</el-radio-button>
+            <el-radio-button value="execute">按执行</el-radio-button>
+          </el-radio-group>
 
-        <el-input
-          v-if="mode === 'execute'"
-          v-model="executeId"
-          placeholder="粘贴 executeId 后回车"
-          clearable
-          style="width: 320px"
-          class="mono"
-          @keyup.enter="query"
-          @clear="query"
-        >
-          <template #append>
-            <el-button :icon="'Search'" @click="query" />
-          </template>
-        </el-input>
+          <el-select
+            v-if="mode === 'agent'"
+            v-model="agentId"
+            filterable
+            clearable
+            placeholder="选择机器"
+            style="width: 240px"
+            @change="query"
+          >
+            <el-option
+              v-for="a in agents"
+              :key="a.agentId"
+              :label="a.displayTag || a.agentId"
+              :value="a.agentId"
+            >
+              <span class="opt">
+                <i class="opt__dot" :style="{ background: agentStatusMeta(a.status).color }" />
+                {{ a.displayTag || a.agentId }}
+                <span class="muted">{{ a.agentId.slice(0, 8) }}</span>
+              </span>
+            </el-option>
+          </el-select>
 
-        <span class="spacer" />
+          <el-input
+            v-if="mode === 'execute'"
+            v-model="executeId"
+            placeholder="executeId，回车查询"
+            clearable
+            style="width: 300px"
+            class="mono"
+            @keyup.enter="query"
+            @clear="query"
+          >
+            <template #append>
+              <el-button :icon="'Search'" @click="query" />
+            </template>
+          </el-input>
+        </div>
 
-        <el-radio-group v-model="sourceFilter" size="small">
-          <el-radio-button value="">两侧</el-radio-button>
-          <el-radio-button value="agent">仅 agent ({{ stat.agent }})</el-radio-button>
-          <el-radio-button value="server">仅 server ({{ stat.server }})</el-radio-button>
-        </el-radio-group>
+        <div class="toolbar__group toolbar__group--end">
+          <el-radio-group v-model="sourceFilter" size="small">
+            <el-radio-button value="">两侧</el-radio-button>
+            <el-radio-button value="agent">agent {{ stat.agent }}</el-radio-button>
+            <el-radio-button value="server">server {{ stat.server }}</el-radio-button>
+          </el-radio-group>
 
-        <el-input
-          v-model="typeKeyword"
-          placeholder="过滤事件名 / 内容"
-          clearable
-          :prefix-icon="'Filter'"
-          style="width: 200px"
-        />
+          <el-input
+            v-model="typeKeyword"
+            placeholder="过滤类型或内容"
+            clearable
+            :prefix-icon="'Filter'"
+            style="width: 190px"
+          />
+        </div>
       </div>
 
-      <div v-if="typeList.length" class="types">
-        <span class="muted">事件类型：</span>
+      <div v-if="ready && typeList.length" class="types">
+        <span class="muted">类型</span>
         <el-tag
           v-for="[type, n] in typeList"
           :key="type"
@@ -214,7 +242,7 @@ function switchMode(next: Mode) {
         >
           {{ type }} <b>{{ n }}</b>
         </el-tag>
-        <el-button v-if="typeKeyword" size="small" text @click="typeKeyword = ''">清除过滤</el-button>
+        <el-button v-if="typeKeyword" size="small" text @click="typeKeyword = ''">清除</el-button>
       </div>
 
       <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
@@ -223,20 +251,20 @@ function switchMode(next: Mode) {
         <EmptyState
           v-if="mode === 'execute' && !executeId"
           variant="search"
-          title="输入一个 executeId 开始查询"
-          desc="可以从任务队列或执行详情页复制 executeId"
+          title="输入 executeId 开始查询"
+          desc="可从任务队列或执行详情复制"
         />
         <EmptyState
           v-else-if="mode === 'agent' && !agentId"
           variant="search"
           title="选择一台机器"
-          desc="查看该机器上报的 hello / hb / evt / fin 与 server 侧的调度事件"
+          desc="查看该机器的上报事件与 server 侧调度记录"
         />
         <TimelineList
           v-else
           :events="filtered"
           :loading="loading"
-          :empty-text="events.length ? '当前过滤条件下没有事件' : '暂无事件'"
+          :empty-text="events.length ? '没有匹配的事件' : '暂无事件'"
         />
       </div>
     </div>
@@ -244,8 +272,15 @@ function switchMode(next: Mode) {
 </template>
 
 <style scoped>
-.spacer {
-  flex: 1;
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toolbar__group--end {
+  margin-left: auto;
 }
 
 .opt {

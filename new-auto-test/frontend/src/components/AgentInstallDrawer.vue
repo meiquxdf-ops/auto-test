@@ -214,6 +214,13 @@ const sshDisabled = computed(
     sshAuthMissing.value,
 )
 
+/** 底部提示：SSH 页把「开始安装」放在页脚常驻，文案跟着状态走 */
+const footHint = computed(() => {
+  if (sshRunning.value) return `正在 SSH 到 ${ssh.host} 执行 install.sh，请勿关闭`
+  if (tab.value === 'ssh') return 'Server 代装，最长约 3 分钟'
+  return '装完机器会自动出现在列表里'
+})
+
 const SSH_ERROR_LABELS: Record<string, string> = {
   tag_conflict: '机器名重名（tag_conflict）',
   connect_failed: '连不上目标机',
@@ -281,13 +288,13 @@ watch(visible, (open) => {
 </script>
 
 <template>
-  <el-drawer v-model="visible" size="680px" :with-header="false">
+  <el-drawer v-model="visible" :size="'min(680px, 100vw)'" :with-header="false">
     <div class="aid">
       <div class="aid__head">
-        <div>
+        <div class="aid__ident">
           <div class="aid__title">安装 Agent</div>
           <div class="aid__sub">
-            三种方式都走同一份 <code class="code-inline">deploy/install.sh</code>，装好后机器自动注册上线
+            三种方式都走 <code class="code-inline">deploy/install.sh</code>，装完自动注册
           </div>
         </div>
         <el-button text :icon="'Close'" @click="visible = false" />
@@ -298,7 +305,10 @@ watch(visible, (open) => {
           <div class="aid__grid">
             <el-form-item :error="(form.displayTag ? tagError : '') || undefined">
               <template #label>
-                <span class="lbl">机器名 tag <b class="req">*</b></span>
+                <span class="lbl">
+                  <span class="lbl__text">机器名 tag <b class="req">*</b></span>
+                  <span class="lbl__hint">全局唯一，重名会被拒绝</span>
+                </span>
               </template>
               <el-input
                 v-model="form.displayTag"
@@ -310,8 +320,8 @@ watch(visible, (open) => {
             <el-form-item :error="serverError || undefined">
               <template #label>
                 <span class="lbl">
-                  Server 地址
-                  <span class="lbl__hint">Agent TCP 端口（:9800），不是网页的 HTTP :8080</span>
+                  <span class="lbl__text">Server 地址 <b class="req">*</b></span>
+                  <span class="lbl__hint">Agent 的 TCP :9800，不是网页的 :8080</span>
                 </span>
               </template>
               <el-input v-model="form.server" spellcheck="false" class="mono" />
@@ -328,8 +338,8 @@ watch(visible, (open) => {
           <el-form-item>
             <template #label>
               <span class="lbl">
-                最大并发
-                <span class="lbl__hint">1 - 4，默认 1；装完也可在机器列表里改</span>
+                <span class="lbl__text">最大并发</span>
+                <span class="lbl__hint">1 - 4，装完也能在列表里改</span>
               </span>
             </template>
             <el-input-number v-model="form.concurrency" :min="1" :max="4" controls-position="right" />
@@ -339,12 +349,10 @@ watch(visible, (open) => {
         <el-tabs v-model="tab" class="aid__tabs">
           <!-- ==================================================== 复制命令 -->
           <el-tab-pane label="复制命令" name="copy">
-            <div class="muted tab-desc">
-              手工方式：把安装物料拷到目标 Linux 机（需 root + systemd），在目标机上执行。
-            </div>
+            <div class="muted tab-desc">把安装物料拷到目标 Linux 机（需 root + systemd），在目标机上执行。</div>
             <section v-for="b in copyBlocks" :key="b.key" class="cmd">
               <div class="cmd__head">
-                <div>
+                <div class="cmd__meta">
                   <span class="cmd__title">{{ b.title }}</span>
                   <span class="cmd__hint">{{ b.hint }}</span>
                 </div>
@@ -356,8 +364,8 @@ watch(visible, (open) => {
                   <span>
                     <el-button
                       size="small"
-                      text
                       type="primary"
+                      plain
                       :icon="'DocumentCopy'"
                       :disabled="b.needForm && !formValid"
                       @click="copy(b.code)"
@@ -374,8 +382,8 @@ watch(visible, (open) => {
           <!-- ==================================================== curl 安装 -->
           <el-tab-pane label="curl 安装" name="curl">
             <div class="muted tab-desc">
-              目标机能访问本 Server 的 HTTP :8080 时，一行命令完成安装：脚本、systemd 模板、二进制
-              全部从本 Server 下载（<b>仅内网</b>，二进制带 sha256 校验，不经公网）。
+              目标机能访问 Server 的 HTTP :8080 时，一行命令装完：脚本、unit 模板、二进制都从本 Server 下载（<b>仅内网</b>，带
+              sha256 校验）。
             </div>
 
             <el-alert
@@ -409,8 +417,8 @@ watch(visible, (open) => {
               <el-form-item :error="httpHostError || undefined">
                 <template #label>
                   <span class="lbl">
-                    Server HTTP 地址
-                    <span class="lbl__hint">目标机 curl 访问的地址（:8080），默认取当前页面的接口地址</span>
+                    <span class="lbl__text">Server HTTP 地址</span>
+                    <span class="lbl__hint">目标机 curl 访问的地址（:8080）</span>
                   </span>
                 </template>
                 <el-input v-model="httpHost" spellcheck="false" class="mono" style="max-width: 320px" />
@@ -419,20 +427,20 @@ watch(visible, (open) => {
 
             <section class="cmd">
               <div class="cmd__head">
-                <div>
+                <div class="cmd__meta">
                   <span class="cmd__title">在目标机上以 root 执行</span>
-                  <span class="cmd__hint">参数原样透传给 install.sh，装完自动等注册（最多 20s）</span>
+                  <span class="cmd__hint">装完自动等注册，最多 20s</span>
                 </div>
                 <el-tooltip
                   :disabled="formValid && !httpHostError && binaryReady"
-                  :content="binaryReady ? '先把机器名 / Server 地址 / HTTP 地址填对' : 'Server 上还没有二进制，先按上面的提示填充'"
+                  :content="binaryReady ? '先把机器名 / Server 地址 / HTTP 地址填对' : 'Server 上还没有二进制'"
                   placement="top"
                 >
                   <span>
                     <el-button
                       size="small"
-                      text
                       type="primary"
+                      plain
                       :icon="'DocumentCopy'"
                       :disabled="!formValid || !!httpHostError || !binaryReady"
                       @click="copy(curlCmd)"
@@ -446,16 +454,15 @@ watch(visible, (open) => {
             </section>
 
             <div class="muted aid__tip">
-              引导脚本先从 <code class="code-inline">/api/agent/files/install.sh</code> 拿真正的安装脚本，再以
-              <code class="code-inline">--url /api/agent/binary --sha256 …</code> 下载并校验二进制，其余参数原样透传。
+              引导脚本先取 <code class="code-inline">/api/agent/files/install.sh</code>，再按
+              <code class="code-inline">--url /api/agent/binary --sha256 …</code> 下载校验二进制，参数原样透传。
             </div>
           </el-tab-pane>
 
           <!-- ==================================================== SSH 代装 -->
           <el-tab-pane label="SSH 代装" name="ssh">
             <div class="muted tab-desc">
-              由 Server 直接 SSH 到目标机：上传 atagent + install.sh + unit 模板并以 root 执行，输出回显到本页。
-              口令 / 私钥<b>仅本次请求内存中使用</b>，Server 不保存、不写日志、不落数据库。
+              由 Server SSH 到目标机上传并以 root 执行，输出回显在下方。口令 / 私钥<b>仅本次请求内存中使用</b>，不保存、不写日志。
             </div>
 
             <el-alert
@@ -465,14 +472,14 @@ watch(visible, (open) => {
               show-icon
               class="aid__warn"
             >
-              <template #title>Server 上还没有可分发的 atagent 二进制，代装会失败</template>
+              <template #title>Server 上没有 atagent 二进制，代装会失败</template>
               {{ info.hint }}
             </el-alert>
 
             <el-form label-position="top" @submit.prevent>
               <div class="aid__grid3">
                 <el-form-item :error="sshHostError || undefined">
-                  <template #label><span class="lbl">目标机地址 <b class="req">*</b></span></template>
+                  <template #label><span class="lbl__text">目标机地址 <b class="req">*</b></span></template>
                   <el-input v-model="ssh.host" placeholder="例如 10.0.0.21" spellcheck="false" class="mono" />
                 </el-form-item>
                 <el-form-item label="SSH 端口">
@@ -483,65 +490,52 @@ watch(visible, (open) => {
                 </el-form-item>
               </div>
 
-              <el-form-item label="认证方式">
-                <el-radio-group v-model="ssh.authType">
-                  <el-radio value="password">口令</el-radio>
-                  <el-radio value="key">私钥</el-radio>
-                </el-radio-group>
-              </el-form-item>
-
-              <el-form-item v-if="ssh.authType === 'password'" label="口令">
-                <el-input
-                  v-model="ssh.password"
-                  type="password"
-                  show-password
-                  placeholder="目标机 SSH 登录口令"
-                  autocomplete="new-password"
-                />
-              </el-form-item>
-              <template v-else>
-                <el-form-item label="私钥内容（OpenSSH / PEM 格式全文）">
+              <el-form-item label="登录凭据">
+                <div class="cred">
+                  <el-radio-group v-model="ssh.authType" size="small">
+                    <el-radio-button value="password">口令</el-radio-button>
+                    <el-radio-button value="key">私钥</el-radio-button>
+                  </el-radio-group>
+                  <el-input
+                    v-if="ssh.authType === 'password'"
+                    v-model="ssh.password"
+                    type="password"
+                    show-password
+                    placeholder="SSH 登录口令"
+                    autocomplete="new-password"
+                    class="cred__input"
+                  />
+                </div>
+                <template v-if="ssh.authType === 'key'">
                   <el-input
                     v-model="ssh.privateKey"
                     type="textarea"
-                    :rows="5"
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
+                    :rows="4"
+                    placeholder="粘贴 OpenSSH / PEM 私钥全文"
                     spellcheck="false"
-                    class="mono"
+                    class="mono cred__key"
                   />
-                </el-form-item>
-                <el-form-item label="私钥口令（没有就留空）">
-                  <el-input v-model="ssh.passphrase" type="password" show-password autocomplete="new-password" />
-                </el-form-item>
-              </template>
+                  <el-input
+                    v-model="ssh.passphrase"
+                    type="password"
+                    show-password
+                    placeholder="私钥口令（没有就留空）"
+                    autocomplete="new-password"
+                    class="cred__key"
+                  />
+                </template>
+              </el-form-item>
 
               <el-form-item>
-                <el-checkbox v-model="ssh.skipHostKeyCheck">跳过主机指纹校验</el-checkbox>
-                <div v-if="ssh.skipHostKeyCheck" class="hostkey-warn">
-                  ⚠ 已跳过指纹校验：连接可能被中间人劫持，口令/私钥会送给冒充的机器。仅限受控内网、且清楚自己在做什么时使用。
-                </div>
-                <div v-else class="muted" style="font-size: 12px">
-                  默认 accept-new：首次连接记录指纹，之后指纹变了会拒绝连接。
+                <div class="hostkey">
+                  <el-checkbox v-model="ssh.skipHostKeyCheck">跳过主机指纹校验</el-checkbox>
+                  <div v-if="ssh.skipHostKeyCheck" class="hostkey__warn">
+                    连接可能被中间人劫持，口令 / 私钥会送给冒充的机器，仅限受控内网使用。
+                  </div>
+                  <div v-else class="hostkey__hint">默认 accept-new：首次连接记录指纹，之后指纹变了会拒绝。</div>
                 </div>
               </el-form-item>
             </el-form>
-
-            <div class="ssh-run">
-              <el-tooltip
-                :disabled="!sshDisabled || sshRunning"
-                content="机器名、目标机地址、认证信息都填好才能开始"
-                placement="top"
-              >
-                <span>
-                  <el-button type="primary" :loading="sshRunning" :disabled="sshDisabled" @click="runSshInstall">
-                    {{ sshRunning ? '正在安装（上传 + 执行，最长约 3 分钟）…' : '开始安装' }}
-                  </el-button>
-                </span>
-              </el-tooltip>
-              <span v-if="sshRunning" class="muted" style="font-size: 12px">
-                Server 正在 SSH 到 {{ ssh.host }} 上传二进制并执行 install.sh，请勿关闭本页
-              </span>
-            </div>
 
             <template v-if="sshResult">
               <el-alert
@@ -560,33 +554,50 @@ watch(visible, (open) => {
               </el-alert>
               <section v-if="sshResult.output" class="cmd">
                 <div class="cmd__head">
-                  <div>
+                  <div class="cmd__meta">
                     <span class="cmd__title">install.sh 输出（尾部）</span>
                     <span v-if="sshResult.exitCode != null" class="cmd__hint">退出码 {{ sshResult.exitCode }}</span>
                     <span v-if="sshResult.durationMs != null" class="cmd__hint">{{ Math.round(sshResult.durationMs / 1000) }}s</span>
                   </div>
-                  <el-button size="small" text type="primary" :icon="'DocumentCopy'" @click="copy(sshResult.output!)">
+                  <el-button
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="'DocumentCopy'"
+                    @click="copy(sshResult.output!)"
+                  >
                     复制
                   </el-button>
                 </div>
-                <pre class="cmd__code cmd__code--tall mono">{{ sshResult.output }}</pre>
+                <pre class="cmd__code cmd__code--out mono">{{ sshResult.output }}</pre>
               </section>
             </template>
           </el-tab-pane>
         </el-tabs>
 
         <div class="muted aid__tip">
-          安装失败时按输出排查：<code class="code-inline">tag_conflict</code> 换名重跑；连不上先
-          <code class="code-inline">nc -vz &lt;server-host&gt; 9800</code>。重跑 install.sh 不会更换机器身份
-          （<code class="code-inline">/var/lib/atagent/agent-id</code> 保留）。
+          失败排查：<code class="code-inline">tag_conflict</code> 换名重跑；连不上先
+          <code class="code-inline">nc -vz &lt;server-host&gt; 9800</code>。重跑不会换机器身份。
         </div>
       </div>
 
       <div class="aid__foot">
-        <span class="muted">装完没出现？状态会实时推送，也可手动刷新</span>
+        <span class="muted aid__foot-hint">{{ footHint }}</span>
         <span class="spacer" />
-        <el-button :icon="'Refresh'" @click="emit('refresh')">刷新机器列表</el-button>
-        <el-button type="primary" @click="visible = false">完成</el-button>
+        <el-button :icon="'Refresh'" @click="emit('refresh')">刷新列表</el-button>
+        <el-tooltip
+          v-if="tab === 'ssh'"
+          :disabled="!sshDisabled || sshRunning"
+          content="机器名、目标机地址、认证信息都填好才能开始"
+          placement="top"
+        >
+          <span>
+            <el-button type="primary" :loading="sshRunning" :disabled="sshDisabled" @click="runSshInstall">
+              {{ sshRunning ? '安装中…' : '开始安装' }}
+            </el-button>
+          </span>
+        </el-tooltip>
+        <el-button v-else type="primary" @click="visible = false">完成</el-button>
       </div>
     </div>
   </el-drawer>
@@ -608,6 +619,10 @@ watch(visible, (open) => {
   border-bottom: 1px solid var(--nat-border);
 }
 
+.aid__ident {
+  min-width: 0;
+}
+
 .aid__title {
   font-size: 16px;
   font-weight: 640;
@@ -619,6 +634,7 @@ watch(visible, (open) => {
   margin-top: 3px;
 }
 
+/* 抽屉里只有这一层滚动，代码块 / 输出都不再自带滚动条 */
 .aid__body {
   flex: 1;
   overflow-y: auto;
@@ -641,8 +657,24 @@ watch(visible, (open) => {
   gap: 0 14px;
 }
 
+@media (max-width: 640px) {
+  .aid__grid,
+  .aid__grid3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .aid__tabs {
   margin-top: 2px;
+}
+
+/* 切页签不用滚回顶部 */
+.aid__tabs :deep(.el-tabs__header) {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin-bottom: 14px;
+  background: var(--nat-panel);
 }
 
 .tab-desc {
@@ -655,16 +687,28 @@ watch(visible, (open) => {
   font-weight: 640;
 }
 
+/* 说明另起一行，窄栏里标题不会被挤成「地 / 址」 */
+.aid :deep(.el-form-item__label) {
+  height: auto;
+  line-height: 1.5;
+  padding-bottom: 6px;
+}
+
 .lbl {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
+  display: block;
+}
+
+.lbl__text,
+.lbl__hint {
+  display: block;
+  white-space: nowrap;
 }
 
 .lbl__hint {
   font-size: 12px;
   color: var(--nat-text-weak);
   font-weight: 400;
+  white-space: normal;
 }
 
 .req {
@@ -689,10 +733,14 @@ watch(visible, (open) => {
 
 .cmd__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 6px;
+}
+
+.cmd__meta {
+  min-width: 0;
 }
 
 .cmd__title {
@@ -703,9 +751,11 @@ watch(visible, (open) => {
 .cmd__hint {
   font-size: 12px;
   color: var(--nat-text-weak);
+  line-height: 1.6;
   margin-left: 8px;
 }
 
+/* 命令整条可见：换行而不是横向裁掉后半段（--server 必须看得到） */
 .cmd__code {
   margin: 0;
   padding: 10px 12px;
@@ -715,30 +765,49 @@ watch(visible, (open) => {
   color: #e2e8f0;
   font-size: 12.5px;
   line-height: 1.7;
-  overflow-x: auto;
-  white-space: pre;
-}
-
-.cmd__code--tall {
-  max-height: 320px;
-  overflow-y: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
-.hostkey-warn {
+.cmd__code--out {
+  overflow-wrap: anywhere;
+}
+
+.cred {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
+}
+
+.cred__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cred__key {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.hostkey {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.hostkey__warn {
   color: #dc2626;
   font-size: 12.5px;
   line-height: 1.7;
   font-weight: 600;
 }
 
-.ssh-run {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0 14px;
+.hostkey__hint {
+  color: var(--nat-text-weak);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .ssh-result-alert {
@@ -759,8 +828,12 @@ watch(visible, (open) => {
   border-top: 1px solid var(--nat-border);
 }
 
-.aid__foot .muted {
+.aid__foot-hint {
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .spacer {

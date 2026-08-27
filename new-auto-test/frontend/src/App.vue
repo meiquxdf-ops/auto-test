@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getApiBase, getApiBaseLabel, setApiBase } from '@/api/http'
@@ -10,25 +10,67 @@ import { fromNow } from '@/utils/format'
 const route = useRoute()
 const { agents, sseState, lastUpdatedAt, reconnect, refresh } = useAgents()
 
+const COMPACT_QUERY = '(max-width: 1100px)'
+
+/** 宽屏：侧栏收成图标条；窄屏：侧栏改为浮层抽屉 */
 const collapsed = ref(localStorage.getItem('nat.navCollapsed') === '1')
+const compact = ref(false)
+const drawerOpen = ref(false)
+
+const railCollapsed = computed(() => !compact.value && collapsed.value)
+
 function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('nat.navCollapsed', collapsed.value ? '1' : '0')
 }
 
+function closeDrawer() {
+  drawerOpen.value = false
+}
+
+function applyCompact(matches: boolean) {
+  compact.value = matches
+  if (!matches) drawerOpen.value = false
+}
+
+function onMediaChange(e: MediaQueryListEvent) {
+  applyCompact(e.matches)
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeDrawer()
+}
+
+let media: MediaQueryList | null = null
+
+onMounted(() => {
+  media = window.matchMedia(COMPACT_QUERY)
+  applyCompact(media.matches)
+  media.addEventListener('change', onMediaChange)
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  media?.removeEventListener('change', onMediaChange)
+  window.removeEventListener('keydown', onKeydown)
+})
+
+watch(() => route.fullPath, closeDrawer)
+
 const navItems = [
-  { key: 'dashboard', to: '/dashboard', label: '总览', icon: 'Odometer', desc: '集群健康与近期事件' },
-  { key: 'agents', to: '/agents', label: '机器', icon: 'Monitor', desc: 'Agent 状态与运维操作' },
-  { key: 'tasks', to: '/tasks', label: '任务队列', icon: 'Tickets', desc: '创建、排序、取消、重跑' },
-  { key: 'timeline', to: '/timeline', label: '时间线', icon: 'Histogram', desc: 'agent / server 事件对账' },
-  { key: 'playground', to: '/playground', label: '测试下发', icon: 'MagicStick', desc: '单机实验与实时跟日志' },
-  { key: 'open', to: '/open', label: '开放查询', icon: 'Link', desc: '按 requestId 查任务与回调' },
+  { key: 'dashboard', to: '/dashboard', label: '总览', icon: 'Odometer' },
+  { key: 'agents', to: '/agents', label: '机器', icon: 'Monitor' },
+  { key: 'tasks', to: '/tasks', label: '任务队列', icon: 'Tickets' },
+  { key: 'timeline', to: '/timeline', label: '时间线', icon: 'Histogram' },
+  { key: 'playground', to: '/playground', label: '测试下发', icon: 'MagicStick' },
+  { key: 'open', to: '/open', label: '开放查询', icon: 'Link' },
 ]
 
 const activeNav = computed(() => (route.meta.nav as string | undefined) ?? '')
-const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '')
 
-const onlineCount = computed(() => agents.value.filter((a) => a.status === 'online' || a.status === 'busy').length)
+const onlineCount = computed(
+  () => agents.value.filter((a) => a.status === 'online' || a.status === 'busy').length,
+)
 
 const stateType = computed(() => {
   switch (sseState.value) {
@@ -44,6 +86,8 @@ const stateType = computed(() => {
 
 const settingVisible = ref(false)
 const baseInput = ref('')
+const dialogWidth = 'min(520px, calc(100vw - 32px))'
+
 function openSetting() {
   baseInput.value = getApiBase()
   settingVisible.value = true
@@ -65,65 +109,72 @@ function resetSetting() {
 </script>
 
 <template>
-  <div class="shell" :class="{ 'shell--collapsed': collapsed }">
-    <aside class="side">
+  <div
+    class="shell"
+    :class="{
+      'shell--rail': railCollapsed,
+      'shell--compact': compact,
+      'is-open': compact && drawerOpen,
+    }"
+  >
+    <aside class="side" :aria-hidden="compact && !drawerOpen">
       <div class="side__brand">
-        <div class="side__logo">AT</div>
-        <div v-show="!collapsed" class="side__brand-text">
-          <div class="side__brand-title">测试执行平台</div>
-          <div class="side__brand-sub">new-auto-test 运维台</div>
-        </div>
+        <span class="side__logo">AT</span>
+        <span class="side__brand-text">测试执行平台</span>
+        <button v-if="compact" class="icon-btn side__close" title="关闭导航" @click="closeDrawer">
+          <el-icon><Close /></el-icon>
+        </button>
       </div>
 
       <nav class="side__nav">
-        <router-link
+        <el-tooltip
           v-for="item in navItems"
           :key="item.key"
-          :to="item.to"
-          class="side__item"
-          :class="{ 'is-active': activeNav === item.key }"
+          :disabled="!railCollapsed"
+          :content="item.label"
+          placement="right"
+          :show-after="200"
         >
-          <el-tooltip :disabled="!collapsed" :content="item.label" placement="right">
+          <router-link :to="item.to" class="side__item" :class="{ 'is-active': activeNav === item.key }">
             <span class="side__item-icon">
               <el-icon><component :is="item.icon" /></el-icon>
             </span>
-          </el-tooltip>
-          <span v-show="!collapsed" class="side__item-body">
             <span class="side__item-label">{{ item.label }}</span>
-            <span class="side__item-desc">{{ item.desc }}</span>
-          </span>
-        </router-link>
+          </router-link>
+        </el-tooltip>
       </nav>
 
-      <div class="side__foot">
-        <div v-show="!collapsed" class="side__stat">
-          <span class="side__stat-dot" :class="`is-${stateType}`" />
-          <span>实时通道 {{ SSE_STATE_TEXT[sseState] }}</span>
-        </div>
-        <div v-show="!collapsed" class="side__stat side__stat--muted">
-          在线 {{ onlineCount }} / {{ agents.length }} 台 · {{ fromNow(lastUpdatedAt) }}
-        </div>
-        <button class="side__collapse" @click="toggleCollapse">
-          <el-icon><component :is="collapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
-          <span v-show="!collapsed">收起侧栏</span>
+      <div v-if="!compact" class="side__foot">
+        <button class="side__collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" @click="toggleCollapse">
+          <span class="side__item-icon">
+            <el-icon><component :is="collapsed ? 'DArrowRight' : 'DArrowLeft'" /></el-icon>
+          </span>
+          <span class="side__item-label">收起侧栏</span>
         </button>
       </div>
     </aside>
 
+    <div v-if="compact" class="scrim" :class="{ 'is-on': drawerOpen }" @click="closeDrawer" />
+
     <div class="main">
       <header class="topbar">
         <div class="topbar__left">
-          <h1 class="topbar__title">{{ pageTitle }}</h1>
+          <button v-if="compact" class="icon-btn" title="打开导航" @click="drawerOpen = true">
+            <el-icon><Expand /></el-icon>
+          </button>
+          <span class="chan">
+            <span class="chan__dot" :class="`is-${stateType}`" />
+            <span class="chan__text">{{ SSE_STATE_TEXT[sseState] }}</span>
+            <span class="chan__meta">
+              在线 {{ onlineCount }}/{{ agents.length }} · {{ fromNow(lastUpdatedAt) }}
+            </span>
+          </span>
         </div>
         <div class="topbar__right">
-          <el-tag :type="stateType" size="small" effect="light" round>
-            实时通道：{{ SSE_STATE_TEXT[sseState] }}
-          </el-tag>
           <el-button v-if="sseState !== 'open'" size="small" text type="primary" @click="reconnect">
             <el-icon><Refresh /></el-icon>
             重连
           </el-button>
-          <el-divider direction="vertical" />
           <el-button size="small" text @click="openSetting">
             <el-icon><Setting /></el-icon>
             接口地址
@@ -140,7 +191,7 @@ function resetSetting() {
       </main>
     </div>
 
-    <el-dialog v-model="settingVisible" title="接口地址" width="520px">
+    <el-dialog v-model="settingVisible" title="接口地址" :width="dialogWidth">
       <el-alert type="info" :closable="false" show-icon class="mb12">
         当前生效：{{ getApiBaseLabel() }}
       </el-alert>
@@ -169,173 +220,167 @@ function resetSetting() {
   overflow: hidden;
 }
 
+/* ------------------------------------------------------------- 侧栏 */
+
 .side {
   width: 216px;
   flex: none;
-  background: var(--nat-nav-bg);
-  color: var(--nat-nav-text);
   display: flex;
   flex-direction: column;
+  background: var(--nat-nav-bg);
+  color: var(--nat-nav-text);
+  border-right: 1px solid var(--nat-border);
+  overflow: hidden;
   transition: width 0.18s ease;
 }
 
-.shell--collapsed .side {
-  width: 62px;
+.shell--rail .side {
+  width: 56px;
 }
 
 .side__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  height: 56px;
+  flex: none;
+  padding: 0 var(--nat-space-4);
+  border-bottom: 1px solid var(--nat-border);
 }
 
 .side__logo {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   flex: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #4c9aff, #2563eb);
+  margin-right: var(--nat-space-3);
+  border-radius: var(--nat-radius-sm);
+  background: var(--nat-accent);
   color: #fff;
-  font-weight: 700;
-  font-size: 13px;
+  font-size: var(--nat-fs-12);
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  letter-spacing: 0.5px;
 }
 
-.side__brand-title {
-  color: #fff;
-  font-size: 14px;
-  font-weight: 620;
-  line-height: 1.3;
+.side__brand-text {
+  font-size: var(--nat-fs-15);
+  font-weight: 600;
+  color: var(--nat-text);
+  white-space: nowrap;
 }
 
-.side__brand-sub {
-  font-size: 11px;
-  color: #7c8ba1;
-  margin-top: 2px;
+.side__close {
+  margin-left: auto;
 }
 
 .side__nav {
   flex: 1;
-  padding: 10px 8px;
+  min-height: 0;
+  padding: var(--nat-space-2) 0;
   overflow-y: auto;
 }
 
-.side__item {
+.side__item,
+.side__collapse {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 8px;
+  height: 36px;
+  margin: 0 var(--nat-space-2) 2px;
+  padding: 0 var(--nat-space-2);
+  border: none;
+  border-radius: var(--nat-radius);
+  background: transparent;
   color: var(--nat-nav-text);
+  font-family: inherit;
+  font-size: var(--nat-fs-13);
+  font-weight: 400;
   text-decoration: none;
-  margin-bottom: 2px;
-  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.side__item:hover {
+.side__item:hover,
+.side__collapse:hover {
   background: var(--nat-nav-bg-soft);
-  color: #fff;
+  color: var(--nat-text);
 }
 
 .side__item.is-active {
-  background: rgba(76, 154, 255, 0.16);
-  color: #fff;
-  box-shadow: inset 2px 0 0 var(--nat-nav-active);
+  background: var(--nat-accent-soft);
+  color: var(--nat-nav-active);
+  font-weight: 500;
 }
 
+/* 8px 外距 + 8px 内距 + 12px 半宽 = 28px，收起态图标正好落在 56px 侧栏中轴 */
 .side__item-icon {
   width: 24px;
+  flex: none;
+  margin-right: var(--nat-space-3);
   display: flex;
+  align-items: center;
   justify-content: center;
   font-size: 16px;
-  flex: none;
 }
 
-.side__item-body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.side__item-label {
-  font-size: 13.5px;
-  font-weight: 540;
-  line-height: 1.35;
-}
-
-.side__item-desc {
-  font-size: 11px;
-  color: #6f7f95;
+/* 文字不换行；宽度动画期间用透明度过渡，避免 v-show 与 width 失步 */
+.side__item-label,
+.side__brand-text {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  opacity: 1;
+  transition: opacity 0.12s ease 0.08s;
 }
 
-.side__item.is-active .side__item-desc {
-  color: #9db6da;
+.shell--rail .side__item-label,
+.shell--rail .side__brand-text {
+  opacity: 0;
+  transition-delay: 0s;
 }
 
 .side__foot {
-  padding: 10px 12px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  font-size: 11.5px;
-}
-
-.side__stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 5px;
-  color: #a7b5c8;
-}
-
-.side__stat--muted {
-  color: #6f7f95;
-}
-
-.side__stat-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #8b949e;
   flex: none;
-}
-
-.side__stat-dot.is-success {
-  background: #34d399;
-  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.16);
-}
-
-.side__stat-dot.is-warning {
-  background: #fbbf24;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.16);
+  padding: var(--nat-space-2) 0;
+  border-top: 1px solid var(--nat-border);
+  color: var(--nat-text-weak);
 }
 
 .side__collapse {
-  margin-top: 8px;
-  width: 100%;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  color: #94a3b8;
-  border-radius: 7px;
-  padding: 6px 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 11.5px;
+  width: calc(100% - var(--nat-space-4));
+  color: var(--nat-text-weak);
 }
 
-.side__collapse:hover {
-  background: var(--nat-nav-bg-soft);
-  color: #fff;
+/* ------------------------------------------------------------- 窄屏抽屉 */
+
+.shell--compact .side {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 21;
+  width: 232px;
+  transform: translateX(-100%);
+  transition: transform 0.18s ease;
 }
+
+.shell--compact.is-open .side {
+  transform: translateX(0);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(16, 20, 28, 0.32);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0.18s;
+}
+
+.scrim.is-on {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ------------------------------------------------------------- 主区 */
 
 .main {
   flex: 1;
@@ -345,36 +390,122 @@ function resetSetting() {
 }
 
 .topbar {
-  height: 52px;
+  min-height: 56px;
   flex: none;
-  background: #fff;
+  background: var(--nat-panel);
   border-bottom: 1px solid var(--nat-border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  gap: 16px;
+  gap: var(--nat-space-3);
+  /* 右内边距 = 页面留白 24 + 滚动条留白 10 - 文字按钮自带 8，让操作与内容右边线对齐 */
+  padding: 0 calc(var(--nat-space-5) + 2px) 0 var(--nat-space-5);
 }
 
-.topbar__title {
-  font-size: 15px;
-  font-weight: 620;
-  margin: 0;
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--nat-space-3);
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .topbar__right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--nat-space-1);
+  margin-left: auto;
+  flex: none;
+}
+
+.chan {
+  display: flex;
+  align-items: center;
+  gap: var(--nat-space-2);
+  min-width: 0;
+  font-size: var(--nat-fs-13);
+  color: var(--nat-text-sub);
+}
+
+.chan__dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--nat-text-weak);
+}
+
+.chan__dot.is-success {
+  background: #16a34a;
+}
+
+.chan__dot.is-warning {
+  background: #d97706;
+}
+
+.chan__text {
+  flex: none;
+  color: var(--nat-text);
+  font-weight: 500;
+}
+
+.chan__meta {
+  min-width: 0;
+  color: var(--nat-text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--nat-border);
+  border-radius: var(--nat-radius);
+  background: var(--nat-panel);
+  color: var(--nat-text-sub);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.icon-btn:hover {
+  background: var(--nat-nav-bg-soft);
+  color: var(--nat-text);
 }
 
 .content {
   flex: 1;
-  overflow-y: auto;
   min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .mb12 {
-  margin-bottom: 12px;
+  margin-bottom: var(--nat-space-3);
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    padding: 0 calc(var(--nat-space-4) + 2px) 0 var(--nat-space-4);
+  }
+}
+
+@media (max-width: 560px) {
+  .chan__meta {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side,
+  .side__item-label,
+  .side__brand-text,
+  .scrim {
+    transition: none;
+  }
 }
 </style>

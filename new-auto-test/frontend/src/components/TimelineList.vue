@@ -9,7 +9,7 @@ const props = withDefaults(
   defineProps<{
     events: TimelineEvent[]
     loading?: boolean
-    /** 紧凑模式：总览页用 */
+    /** 紧凑模式：总览页用，恒定单列 */
     compact?: boolean
     emptyText?: string
     showExecuteLink?: boolean
@@ -19,45 +19,74 @@ const props = withDefaults(
 
 const expanded = ref<Set<string>>(new Set())
 
-function toggle(id: string) {
+function toggle(key: string) {
   const next = new Set(expanded.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
   expanded.value = next
 }
 
-function detailText(e: TimelineEvent): string {
-  if (e.detail === undefined || e.detail === null) return ''
-  if (typeof e.detail === 'string') return e.detail
+/** 详情只在展开时才序列化，300 条列表不为看不见的内容付出 JSON.stringify */
+function detailText(detail: unknown): string {
+  if (typeof detail === 'string') return detail
   try {
-    return JSON.stringify(e.detail, null, 2)
+    return JSON.stringify(detail, null, 2)
   } catch {
-    return String(e.detail)
+    return String(detail)
   }
 }
 
+const toneCache = new Map<string, string>()
+
 /** 事件名 → 颜色，让关键节点一眼能扫出来 */
 function toneOf(type: string): string {
+  const cached = toneCache.get(type)
+  if (cached) return cached
   const t = type.toLowerCase()
-  if (/(fail|error|exception|timeout|dead|reject|dup)/.test(t)) return '#dc2626'
-  if (/(cancel|stop|kill)/.test(t)) return '#8b949e'
-  if (/(finish|fin|done|complete|pass|ack)/.test(t)) return '#16a34a'
-  if (/(start|exec|dispatch|run)/.test(t)) return '#2563eb'
-  if (/(disconnect|lost|retry|reconnect|lease)/.test(t)) return '#ea8a04'
-  return '#5b6676'
+  let tone = '#5b6676'
+  if (/(fail|error|exception|timeout|dead|reject|dup)/.test(t)) tone = '#dc2626'
+  else if (/(cancel|stop|kill)/.test(t)) tone = '#8b949e'
+  else if (/(finish|fin|done|complete|pass|ack)/.test(t)) tone = '#16a34a'
+  else if (/(start|exec|dispatch|run)/.test(t)) tone = '#2563eb'
+  else if (/(disconnect|lost|retry|reconnect|lease)/.test(t)) tone = '#ea8a04'
+  toneCache.set(type, tone)
+  return tone
 }
 
-const grouped = computed(() =>
-  props.events.map((e) => ({
-    ...e,
-    tone: toneOf(e.type),
-    detail: detailText(e),
-  })),
-)
+function looksLikeJson(text: string): boolean {
+  const s = text.trim()
+  return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))
+}
+
+const rows = computed(() => {
+  /** key 只跟事件本身有关，自动刷新时同一条事件不会因为下标位移而整块重建 */
+  const seen = new Map<string, number>()
+  return props.events.map((e, idx) => {
+    const base = e.id || `${e.source}-${e.ts ?? idx}`
+    const dup = seen.get(base) ?? 0
+    seen.set(base, dup + 1)
+    return {
+      ...e,
+      key: dup ? `${base}#${dup}` : base,
+      tone: toneOf(e.type),
+      jsonMsg: !!e.message && looksLikeJson(e.message),
+      hasDetail: e.detail !== undefined && e.detail !== null && e.detail !== '',
+      hasChips: !!(
+        e.displayTag ||
+        e.agentId ||
+        e.executeId ||
+        e.token ||
+        e.sessionId ||
+        e.bootId ||
+        e.evtId
+      ),
+    }
+  })
+})
 </script>
 
 <template>
-  <div class="tl" :class="{ 'tl--compact': compact, 'tl--stack': compact }">
+  <div class="tl" :class="{ 'tl--compact': compact, 'tl--dual': !compact }">
     <div v-if="loading && !events.length" class="tl__loading">
       <el-skeleton :rows="4" animated />
     </div>
@@ -66,38 +95,32 @@ const grouped = computed(() =>
 
     <div v-else class="tl__body">
       <div class="tl__axis" />
-      <div v-if="!compact" class="tl__legend">
-        <span class="tl__legend-item"><i class="tl__legend-dot is-agent" />Agent 上报</span>
-        <span class="tl__legend-item"><i class="tl__legend-dot is-server" />Server 侧</span>
-      </div>
 
       <div
-        v-for="(e, idx) in grouped"
-        :key="`${e.id}-${idx}`"
+        v-for="e in rows"
+        :key="e.key"
         class="tl__row"
         :class="e.source === 'agent' ? 'is-left' : 'is-right'"
       >
         <div class="tl__slot">
+          <span class="tl__node" :style="{ background: e.tone, color: e.tone }" />
           <div class="tl__card" :style="{ borderLeftColor: e.tone }">
             <div class="tl__card-head">
-              <span class="tl__type" :style="{ color: e.tone }">{{ e.type }}</span>
-              <el-tag size="small" :type="e.source === 'agent' ? 'success' : 'info'" effect="plain" round>
-                {{ e.source === 'agent' ? 'agent' : 'server' }}
-              </el-tag>
-              <span class="spacer" />
-              <el-tooltip :content="formatFullTime(e.ts)" placement="top">
-                <span class="tl__time mono">{{ formatTime(e.ts) }}</span>
-              </el-tooltip>
+              <span class="tl__type mono" :style="{ color: e.tone }" :title="e.type">{{ e.type }}</span>
+              <span class="tl__src">{{ e.source }}</span>
+              <span class="tl__time mono" :title="formatFullTime(e.ts)">{{ formatTime(e.ts) }}</span>
             </div>
 
-            <div v-if="e.message" class="tl__msg">{{ e.message }}</div>
+            <div v-if="e.message" class="tl__msg" :class="{ 'tl__msg--json': e.jsonMsg }">
+              {{ e.message }}
+            </div>
 
-            <div class="tl__chips">
+            <div v-if="e.hasChips" class="tl__chips">
               <span v-if="e.displayTag || e.agentId" class="tl__chip">
                 机器 <b>{{ e.displayTag || shortId(e.agentId) }}</b>
               </span>
               <span v-if="e.executeId" class="tl__chip">
-                execution
+                执行
                 <router-link
                   v-if="showExecuteLink"
                   class="tl__link mono"
@@ -116,17 +139,16 @@ const grouped = computed(() =>
               <span v-if="e.bootId" class="tl__chip">
                 boot <CopyableId :value="e.bootId" :head="6" />
               </span>
-              <span v-if="e.evtId" class="tl__chip">evtId <b class="mono">{{ e.evtId }}</b></span>
+              <span v-if="e.evtId" class="tl__chip">evt <b class="mono">{{ e.evtId }}</b></span>
             </div>
 
-            <div v-if="e.detail" class="tl__detail">
-              <button class="link-btn" @click="toggle(`${e.id}-${idx}`)">
-                {{ expanded.has(`${e.id}-${idx}`) ? '收起详情' : '展开详情' }}
+            <div v-if="e.hasDetail" class="tl__detail">
+              <button class="link-btn" @click="toggle(e.key)">
+                {{ expanded.has(e.key) ? '收起' : '详情' }}
               </button>
-              <pre v-if="expanded.has(`${e.id}-${idx}`)" class="tl__pre mono">{{ e.detail }}</pre>
+              <pre v-if="expanded.has(e.key)" class="tl__pre mono">{{ detailText(e.detail) }}</pre>
             </div>
           </div>
-          <span class="tl__node" :style="{ background: e.tone }" />
         </div>
       </div>
     </div>
@@ -136,6 +158,8 @@ const grouped = computed(() =>
 <style scoped>
 .tl {
   position: relative;
+  /* 布局跟随容器宽度，不跟随视口：抽屉 / 侧栏里同样能正确降级 */
+  container-type: inline-size;
 }
 
 .tl__loading {
@@ -149,64 +173,43 @@ const grouped = computed(() =>
 
 .tl__axis {
   position: absolute;
-  left: 50%;
+  left: 8px;
   top: 0;
   bottom: 0;
   width: 2px;
   margin-left: -1px;
-  background: linear-gradient(180deg, transparent, var(--nat-border-strong) 6%, var(--nat-border-strong) 94%, transparent);
+  background: var(--nat-border-strong);
 }
 
-.tl__legend {
-  display: flex;
-  justify-content: center;
-  gap: 18px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: var(--nat-text-weak);
-  position: relative;
-}
-
-.tl__legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.tl__legend-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
-.tl__legend-dot.is-agent {
-  background: #16a34a;
-}
-
-.tl__legend-dot.is-server {
-  background: #2563eb;
-}
-
+/* 默认单列：窄容器一律贴着左侧时间轴排 */
 .tl__row {
   display: flex;
+  justify-content: flex-end;
   position: relative;
   margin-bottom: 10px;
-}
-
-.tl__row.is-left {
-  justify-content: flex-start;
-}
-
-.tl__row.is-right {
-  justify-content: flex-end;
 }
 
 .tl__slot {
-  width: calc(50% - 18px);
   position: relative;
+  display: flex;
+  width: calc(100% - 24px);
+}
+
+.tl__node {
+  position: absolute;
+  top: 14px;
+  left: -16px;
+  transform: translateX(-50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px currentColor;
 }
 
 .tl__card {
+  flex: 1 1 auto;
+  min-width: 0;
   background: #fff;
   border: 1px solid var(--nat-border);
   border-left: 3px solid;
@@ -225,17 +228,26 @@ const grouped = computed(() =>
   gap: 8px;
 }
 
-.spacer {
-  flex: 1;
-}
-
 .tl__type {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 620;
   font-size: 13px;
-  font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.tl__src {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--nat-text-weak);
 }
 
 .tl__time {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   color: var(--nat-text-weak);
   font-size: 11.5px;
 }
@@ -245,7 +257,18 @@ const grouped = computed(() =>
   color: var(--nat-text-sub);
   font-size: 12.5px;
   line-height: 1.6;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* 直接把 JSON 塞进 message 的事件：等宽 + 截断，别让一条事件吃掉整屏 */
+.tl__msg--json {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 
 .tl__chips {
@@ -261,6 +284,7 @@ const grouped = computed(() =>
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .tl__chip b {
@@ -289,68 +313,78 @@ const grouped = computed(() =>
   border-radius: 6px;
   font-size: 11.5px;
   line-height: 1.6;
-  max-height: 240px;
+  max-height: 420px;
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  /* anywhere 只在放不下时断行，break-all 会把短 key 也切碎 */
+  overflow-wrap: anywhere;
 }
 
-.tl__node {
-  position: absolute;
-  top: 14px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px currentColor;
-}
-
-.is-left .tl__node {
-  right: -22px;
-}
-
-.is-right .tl__node {
-  left: -22px;
-}
-
-/* 窄容器（侧栏、小屏）退化成单列，左右对齐留给时间线主页面 */
-.tl--stack .tl__axis {
-  left: 8px;
-}
-
-.tl--stack .tl__row.is-left,
-.tl--stack .tl__row.is-right {
-  justify-content: flex-end;
-}
-
-.tl--stack .tl__slot {
-  width: calc(100% - 26px);
-}
-
-.tl--stack .is-left .tl__node,
-.tl--stack .is-right .tl__node {
-  left: -21px;
-  right: auto;
-}
-
-@media (max-width: 900px) {
-  .tl__axis {
-    left: 8px;
+/* 容器够宽才分两列：agent 左 / server 右，卡片限宽贴着轴，不摊平成一整行 */
+@container (min-width: 880px) {
+  .tl--dual .tl__axis {
+    left: 50%;
   }
 
-  .tl__row.is-left,
-  .tl__row.is-right {
+  .tl--dual .tl__row.is-left {
+    justify-content: flex-start;
+  }
+
+  .tl--dual .tl__slot {
+    width: calc(50% - 20px);
+  }
+
+  .tl--dual .is-left .tl__slot {
     justify-content: flex-end;
   }
 
-  .tl__slot {
-    width: calc(100% - 28px);
+  .tl--dual .tl__card {
+    max-width: 420px;
   }
 
-  .is-left .tl__node,
-  .is-right .tl__node {
-    left: -22px;
-    right: auto;
+  .tl--dual .is-left .tl__node {
+    left: auto;
+    right: -20px;
+    transform: translateX(50%);
+  }
+
+  .tl--dual .is-right .tl__node {
+    left: -20px;
+  }
+}
+
+/* 不支持容器查询时退回视口断点：内容区约为视口宽 - 300px */
+@supports not (container-type: inline-size) {
+  @media (min-width: 1180px) {
+    .tl--dual .tl__axis {
+      left: 50%;
+    }
+
+    .tl--dual .tl__row.is-left {
+      justify-content: flex-start;
+    }
+
+    .tl--dual .tl__slot {
+      width: calc(50% - 20px);
+    }
+
+    .tl--dual .is-left .tl__slot {
+      justify-content: flex-end;
+    }
+
+    .tl--dual .tl__card {
+      max-width: 420px;
+    }
+
+    .tl--dual .is-left .tl__node {
+      left: auto;
+      right: -20px;
+      transform: translateX(50%);
+    }
+
+    .tl--dual .is-right .tl__node {
+      left: -20px;
+    }
   }
 }
 </style>
