@@ -1,0 +1,294 @@
+// Package client owns one TCP session to the server plus the dial/backoff
+// policy used to keep it up.
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/atest/atagent/internal/proto"
+)
+
+// ErrSessionClosed is returned by Call once the session is gone.
+var ErrSessionClosed = errors.New("session closed")
+
+// Response is what a server initiated request produces. After, when set, runs
+// once the response frame is on the wire - that is how exec starts the process
+// strictly after the ACK.
+type Response struct {
+	Result any
+	Err    *proto.Error
+	After  func()
+}
+
+// OK builds a successful response.
+func OK(result any) Response { return Response{Result: result} }
+
+// Fail builds an error response.
+func Fail(code, format string, args ...any) Response {
+	return Response{Err: proto.Errf(code, format, args...)}
+}
+
+// Handler dispatches one server request.
+type Handler func(m string, args json.RawMessage) Response
+
+// SessionOptions tune timeouts.
+type SessionOptions struct {
+	// ReadTimeout closes the session when no frame arrives in this window.
+	ReadTimeout time.Duration
+	// WriteTimeout bounds a single frame write.
+	WriteTimeout time.Duration
+	// CallTimeout bounds an agent initiated request.
+	CallTimeout time.Duration
+	// Logf receives session level diagnostics.
+	Logf func(format string, args ...any)
+}
+
+// Session multiplexes requests and responses over one connection.
+type Session struct {
+	conn    net.Conn
+	fr      *proto.FrameReader
+	opt     SessionOptions
+	handler Handler
+
+	writeMu sync.Mutex
+	nextID  atomic.Int64
+
+	pendingMu sync.Mutex
+	pending   map[int64]chan *proto.Envelope
+
+	closeOnce sync.Once
+	closed    chan struct{}
+	errMu     sync.Mutex
+	err       error
+
+	OpenedAt time.Time
+}
+
+// NewSession wraps an established connection.
+func NewSession(conn net.Conn, handler Handler, opt SessionOptions) *Session {
+	if opt.ReadTimeout <= 0 {
+		opt.ReadTimeout = 60 * time.Second
+	}
+	if opt.WriteTimeout <= 0 {
+		opt.WriteTimeout = 20 * time.Second
+	}
+	if opt.CallTimeout <= 0 {
+		opt.CallTimeout = 30 * time.Second
+	}
+	if opt.Logf == nil {
+		opt.Logf = func(string, ...any) {}
+	}
+	return &Session{
+		conn:     conn,
+		fr:       proto.NewFrameReader(conn),
+		opt:      opt,
+		handler:  handler,
+		pending:  map[int64]chan *proto.Envelope{},
+		closed:   make(chan struct{}),
+		OpenedAt: time.Now(),
+	}
+}
+
+// Serve runs the read loop until the connection fails or Close is called.
+func (s *Session) Serve() {
+	defer s.Close(nil)
+	for {
+		if err := s.conn.SetReadDeadline(time.Now().Add(s.opt.ReadTimeout)); err != nil {
+			s.Close(err)
+			return
+		}
+		payload, err := s.fr.ReadFrame()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = fmt.Errorf("server closed the connection")
+			}
+			s.Close(err)
+			return
+		}
+		env, err := proto.Decode(payload)
+		if err != nil {
+			// A frame we cannot parse is a protocol break; drop the session so
+			// the reconnect path can resynchronise.
+			s.Close(err)
+			return
+		}
+		switch env.T {
+		case proto.KindRsp:
+			s.deliver(env)
+		case proto.KindReq:
+			go s.dispatch(env)
+		default:
+			s.opt.Logf("ignoring frame with unknown type %q", env.T)
+		}
+	}
+}
+
+func (s *Session) deliver(env *proto.Envelope) {
+	s.pendingMu.Lock()
+	ch, ok := s.pending[env.ID]
+	delete(s.pending, env.ID)
+	s.pendingMu.Unlock()
+	if !ok {
+		s.opt.Logf("late response for id %d", env.ID)
+		return
+	}
+	ch <- env
+}
+
+func (s *Session) dispatch(env *proto.Envelope) {
+	var resp Response
+	if s.handler == nil {
+		resp = Fail(proto.CodeUnsupported, "no handler for %q", env.M)
+	} else {
+		resp = s.handler(env.M, env.A)
+	}
+
+	var out *proto.Envelope
+	if resp.Err != nil {
+		out = &proto.Envelope{V: proto.Version, T: proto.KindRsp, ID: env.ID, OK: boolPtr(false), E: resp.Err}
+	} else {
+		built, err := proto.NewRsp(env.ID, resp.Result)
+		if err != nil {
+			out = proto.NewErrRsp(env.ID, proto.CodeInternal, "encode result: %v", err)
+		} else {
+			out = built
+		}
+	}
+	if err := s.write(out); err != nil {
+		s.Close(err)
+		return
+	}
+	if resp.After != nil {
+		resp.After()
+	}
+}
+
+// Call sends a request and waits for its response. A protocol level failure is
+// returned as *proto.Error; anything else means the session is broken.
+func (s *Session) Call(ctx context.Context, m string, args any, result any) error {
+	id := s.nextID.Add(1)
+	env, err := proto.NewReq(id, m, args)
+	if err != nil {
+		return err
+	}
+
+	ch := make(chan *proto.Envelope, 1)
+	s.pendingMu.Lock()
+	s.pending[id] = ch
+	s.pendingMu.Unlock()
+
+	cleanup := func() {
+		s.pendingMu.Lock()
+		delete(s.pending, id)
+		s.pendingMu.Unlock()
+	}
+
+	if err := s.write(env); err != nil {
+		cleanup()
+		s.Close(err)
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, s.opt.CallTimeout)
+	defer cancel()
+
+	select {
+	case rsp := <-ch:
+		if !rsp.IsOK() {
+			if rsp.E != nil {
+				return rsp.E
+			}
+			return proto.Errf(proto.CodeInternal, "%s failed without an error body", m)
+		}
+		if result != nil && len(rsp.R) > 0 {
+			if err := json.Unmarshal(rsp.R, result); err != nil {
+				return fmt.Errorf("decode %s result: %w", m, err)
+			}
+		}
+		return nil
+	case <-ctx.Done():
+		cleanup()
+		err := fmt.Errorf("%s timed out after %s", m, s.opt.CallTimeout)
+		s.Close(err)
+		return err
+	case <-s.closed:
+		cleanup()
+		if e := s.Err(); e != nil {
+			return e
+		}
+		return ErrSessionClosed
+	}
+}
+
+func (s *Session) write(env *proto.Envelope) error {
+	payload, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", env.M, err)
+	}
+	if len(payload) > proto.MaxFrame {
+		return fmt.Errorf("%s frame is %d bytes, over the 1MiB limit", env.M, len(payload))
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	select {
+	case <-s.closed:
+		return ErrSessionClosed
+	default:
+	}
+	if err := s.conn.SetWriteDeadline(time.Now().Add(s.opt.WriteTimeout)); err != nil {
+		return err
+	}
+	return proto.WriteFrame(s.conn, payload)
+}
+
+// Close tears the session down; the first cause reported wins.
+func (s *Session) Close(cause error) {
+	s.closeOnce.Do(func() {
+		s.errMu.Lock()
+		if s.err == nil {
+			s.err = cause
+		}
+		s.errMu.Unlock()
+		close(s.closed)
+		_ = s.conn.Close()
+		// Callers blocked in Call observe s.closed and unregister themselves.
+	})
+}
+
+// Done is closed when the session ends.
+func (s *Session) Done() <-chan struct{} { return s.closed }
+
+// Alive reports whether the session can still carry frames.
+func (s *Session) Alive() bool {
+	select {
+	case <-s.closed:
+		return false
+	default:
+		return true
+	}
+}
+
+// Err reports why the session ended.
+func (s *Session) Err() error {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.err
+}
+
+// RemoteAddr is the server address of this session.
+func (s *Session) RemoteAddr() string {
+	if s.conn == nil {
+		return ""
+	}
+	return s.conn.RemoteAddr().String()
+}
+
+func boolPtr(b bool) *bool { return &b }

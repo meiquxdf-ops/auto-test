@@ -1,0 +1,53 @@
+# atagent 配置样例，安装到 /etc/atagent/config.yaml
+#
+# 优先级：内置默认值 < 本文件 < 环境变量(ATEST_*) < 命令行参数
+# 键名大小写与 -/_ 不敏感：dataDir / data_dir / data-dir 等价
+
+# Server 的 Agent 接入地址；只写 IP 时默认补 :9800
+server: 127.0.0.1:9800
+
+# 本机展示名，全局唯一，重名会被 Server 拒绝
+tag: build-01
+
+# 除 tag 外额外上报的别名，方便旧名字继续可用
+# aliases:
+#   - build-01.internal
+
+# 同时运行的执行数，1..4；只在本机空闲时允许改
+concurrency: 1
+
+# 数据目录：agent-id、日志 journal、待发 fin 都在这里
+dataDir: /var/lib/atagent
+
+# 执行命令用的 shell，命令以 `<shell> -c <command>` 启动
+shell: /bin/bash
+
+# 心跳间隔，Server 据此续租约
+heartbeatSec: 5
+
+# 每个 execution 本地保留的日志尾部，超出部分丢弃并标记截断
+maxLogBytes: 5MB
+
+# 取消/超时时，SIGTERM 到 SIGKILL 的等待时间
+killGraceSec: 5
+
+# Agent 退出前是否结束正在跑的执行。
+# true  = 结束进程组并上报 agent_shutdown，状态确定
+# false = 留着不管，交给 Server 按租约对账
+killOnShutdown: true
+
+# 重连退避区间（毫秒），带随机抖动
+reconnectMinMs: 500
+reconnectMaxMs: 30000
+
+# debug | info | warn | error
+logLevel: info
+
+# 状态查询 socket 与状态文件，默认在 dataDir 下
+# socket: /var/lib/atagent/atagent.sock
+# statusFile: /var/lib/atagent/status.json
+
+# 注入到每次执行的公共环境变量，会被本次下发的 env 覆盖
+# env:
+#   CI: "true"
+#   REGION: cn-east
