@@ -13,6 +13,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
 @RestControllerAdvice
@@ -44,6 +45,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Void> handleClientAbort(Exception e, HttpServletRequest req) {
         log.debug("client aborted {} {}: {}", req.getMethod(), req.getRequestURI(), e.toString());
         return ResponseEntity.ok().build();
+    }
+
+    /** An unmatched path is a routine 404; without this the catch-all turns it into a 500. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException e,
+                                                                HttpServletRequest req) {
+        return build(HttpStatus.NOT_FOUND, "not_found", "no such path", req);
     }
 
     @ExceptionHandler(Exception.class)
