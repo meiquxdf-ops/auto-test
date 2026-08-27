@@ -109,9 +109,9 @@ log_level: "info"
 
 ### 对 `atagent` 二进制的约定
 
-unit 里是 `atagent --config /etc/atagent/config.yaml`，并导出 `ATEST_CONFIG`（Agent 实际读取的环境变量）：
+unit 里是 `atagent run --config /etc/atagent/config.yaml`，并导出 `ATEST_CONFIG`（Agent 唯一认的配置环境变量，没有 `ATAGENT_CONFIG` 之类的别名）：
 
-- 接受 `--config <path>`（Go flag，`-config` 等价），或在没有该参数时读 `ATEST_CONFIG`；
+- 接受 `run --config <path>`（Go flag，`-config` 等价；不写子命令时默认就是 `run`），没有该参数时读 `ATEST_CONFIG`；
 - 配置字段名与上面那份 `config.yaml` 一致；未知键会被忽略；
 - 机器身份是 `<data_dir>/agent-id`，安装时生成，Agent 沿用；
 - 收到 `SIGTERM` 时优雅退出。父进程被 systemd 以 `control-group` 方式回收，任务派生的子进程会一起被清掉，所以 Agent 自己不用兜底杀子进程树；
