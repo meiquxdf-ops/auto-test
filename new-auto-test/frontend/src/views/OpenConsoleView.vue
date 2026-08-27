@@ -27,7 +27,30 @@ const router = useRouter()
 const embedded = computed(() => isEmbed(route.query))
 
 const LAST_KEY = 'nat.openConsole.requestId'
+const RECENT_KEY = 'nat.openConsole.recentIds'
+const RECENT_MAX = 8
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/
+
+/** 最近查过的 requestId（查询成功才记），坏数据当没有 */
+function loadRecentIds(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]')
+    if (Array.isArray(raw)) {
+      return raw.filter((x): x is string => typeof x === 'string' && ID_RE.test(x)).slice(0, RECENT_MAX)
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+const recentIds = ref<string[]>(loadRecentIds())
+
+function rememberRecentId(id: string) {
+  const next = [id, ...recentIds.value.filter((x) => x !== id)].slice(0, RECENT_MAX)
+  recentIds.value = next
+  localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+}
 
 /** 旧请求页的外链带过一个 reuqestId 拼写错误，两种写法都认 */
 const deepLinkId = (() => {
@@ -69,6 +92,7 @@ async function query(silent = false) {
     error.value = ''
     lastLoadedAt.value = Date.now()
     localStorage.setItem(LAST_KEY, id)
+    rememberRecentId(id)
     if (route.query.requestId !== id || route.query.reuqestId !== undefined) {
       void router.replace({ query: { ...route.query, requestId: id, reuqestId: undefined } })
     }
@@ -86,6 +110,14 @@ async function query(silent = false) {
       searched.value = true
     }
   }
+}
+
+/** 搜索框下方的最近记录：不重复展示当前这条 */
+const recentShown = computed(() => recentIds.value.filter((x) => x !== queriedId.value))
+
+function queryRecent(id: string) {
+  requestIdInput.value = id
+  void query()
 }
 
 /* ------------------------------------------------------------ 尺寸自适应 */
@@ -176,7 +208,7 @@ const overall = computed<OverallBadge>(() => {
 })
 
 interface StatItem {
-  key: string
+  key: 'total' | ExecutionStatus
   label: string
   n: number
   color: string
@@ -230,16 +262,53 @@ const callbackSummary = computed(() => {
 
 const keyword = ref('')
 const statusFilter = ref<ExecutionStatus | ''>('')
+const machineFilter = ref('')
 
 /** 只列出现存的状态，避免一排空选项 */
 const statusOptions = computed(() =>
   EXECUTION_STATUSES.filter((s) => taskCounts.value[s] > 0 || statusFilter.value === s),
 )
 
+/** 概览筹码即筛选：点中的再点一下（或点总任务）清掉 */
+function toggleStatusChip(key: 'total' | ExecutionStatus) {
+  if (key === 'total') {
+    statusFilter.value = ''
+    return
+  }
+  statusFilter.value = statusFilter.value === key ? '' : key
+}
+
+/** 「执行中」一档把 dispatching 一起算进来，跟概览的数字口径一致 */
+function matchesStatusFilter(t: Task): boolean {
+  if (!statusFilter.value) return true
+  if (t.status === statusFilter.value) return true
+  return statusFilter.value === 'running' && t.status === 'dispatching'
+}
+
+/** 本批出现过的机器：已有执行的按 displayTag/agentId，还没生成执行的看 targets */
+const machineOptions = computed(() => {
+  const set = new Set<string>()
+  for (const t of tasks.value) {
+    for (const e of t.executions) {
+      const m = e.displayTag || e.agentId
+      if (m) set.add(m)
+    }
+    for (const x of t.targets) if (x) set.add(x)
+  }
+  return [...set].sort()
+})
+
+function matchesMachineFilter(t: Task): boolean {
+  const m = machineFilter.value
+  if (!m) return true
+  return t.targets.includes(m) || t.executions.some((e) => (e.displayTag || e.agentId) === m)
+}
+
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   return tasks.value.filter((t) => {
-    if (statusFilter.value && t.status !== statusFilter.value) return false
+    if (!matchesStatusFilter(t)) return false
+    if (!matchesMachineFilter(t)) return false
     if (!kw) return true
     return (
       t.command.toLowerCase().includes(kw) ||
@@ -258,18 +327,47 @@ const filtered = computed(() => {
 function clearFilters() {
   keyword.value = ''
   statusFilter.value = ''
+  machineFilter.value = ''
 }
 
 /* ------------------------------------------------------------ 行辅助 */
 
-function machinesOf(task: Task): string {
+function machineListOf(task: Task): string[] {
   const set = new Set<string>()
   for (const e of task.executions) {
     const m = e.displayTag || e.agentId
     if (m) set.add(m)
   }
-  if (set.size) return [...set].join('、')
-  return task.targets.join('、') || '-'
+  return set.size ? [...set] : task.targets
+}
+
+function machinesOf(task: Task): string {
+  return machineListOf(task).join('、') || '-'
+}
+
+interface Verdict {
+  text: string
+  exit: number | null
+}
+
+/**
+ * 判定 / 最后一行：任务为什么停在这个状态。
+ * 优先取与任务状态一致的最新执行（fail 的任务看失败那条），否则退回「最值得看」的执行。
+ */
+function verdictOf(task: Task): Verdict {
+  const ts = (e: Execution) => e.finishedAt ?? e.startedAt ?? e.createdAt ?? 0
+  const same = task.executions.filter((e) => e.status === task.status)
+  const ex = same.length ? same.reduce((a, b) => (ts(b) > ts(a) ? b : a)) : pickBestExecution(task)
+  if (!ex) return { text: '', exit: null }
+  return { text: ex.lastLine || ex.conditionHit || ex.message || '', exit: ex.exitCode ?? null }
+}
+
+function verdictTitle(task: Task): string {
+  const v = verdictOf(task)
+  const parts: string[] = []
+  if (v.text) parts.push(v.text)
+  if (v.exit !== null) parts.push(`exitCode ${v.exit}`)
+  return parts.join('\n')
 }
 
 function taskDisconnected(task: Task): boolean {
@@ -557,6 +655,60 @@ function openNodes(task: Task) {
   timelineDrawer.value = { executeId: ex.executeId, machine: ex.displayTag || ex.agentId || '' }
 }
 
+/* ------------------------------------------------------------ 分享 / 导出 */
+
+/** hash 路由：origin+pathname 后面拼 resolve 出来的 #/open?requestId=…（嵌入态带上 embed=1） */
+async function copyShareLink() {
+  const query: Record<string, string> = { requestId: queriedId.value }
+  if (embedded.value) query.embed = '1'
+  const hash = router.resolve({ path: route.path, query }).href
+  const url = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`
+  const ok = await copyText(url)
+  ElMessage[ok ? 'success' : 'error']({ message: ok ? '链接已复制' : '复制失败', duration: 1500 })
+}
+
+/** 把当前批次落成 requestId.json，全部来自页面已有数据，不打新接口 */
+function exportJson() {
+  const data = {
+    requestId: queriedId.value,
+    overall: overall.value.label,
+    counts: taskCounts.value,
+    exportedAt: new Date().toISOString(),
+    tasks: tasks.value.map((t) => {
+      const v = verdictOf(t)
+      return {
+        taskId: t.taskId,
+        command: t.command,
+        status: t.status,
+        operator: t.operator ?? null,
+        targets: t.targets,
+        machines: machineListOf(t),
+        lastLine: v.text || null,
+        exitCode: v.exit,
+        callbackStatus: t.callbackStatus,
+        executions: t.executions.map((e) => ({
+          executeId: e.executeId,
+          machine: e.displayTag || e.agentId || null,
+          status: e.status,
+          exitCode: e.exitCode ?? null,
+          lastLine: e.lastLine || null,
+          conditionHit: e.conditionHit || null,
+          message: e.message || null,
+          startedAt: e.startedAt ?? null,
+          finishedAt: e.finishedAt ?? null,
+        })),
+      }
+    }),
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${queriedId.value || 'tasks'}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 /* ------------------------------------------------------------ 速览 */
 
 const curlSnippet = computed(
@@ -608,6 +760,20 @@ async function copySnippet() {
           <el-tooltip content="有未完成任务时每 5 秒自动刷新" placement="top" popper-class="oc-pop">
             <el-switch v-model="autoRefresh" size="small" active-text="自动刷新" />
           </el-tooltip>
+        </div>
+
+        <div v-if="recentShown.length" class="oc__recent">
+          <span class="oc__recent-k">最近</span>
+          <button
+            v-for="id in recentShown"
+            :key="id"
+            type="button"
+            class="oc__recent-id mono"
+            :title="`查询 ${id}`"
+            @click="queryRecent(id)"
+          >
+            {{ id }}
+          </button>
         </div>
       </div>
 
@@ -669,11 +835,26 @@ async function copySnippet() {
             </div>
           </div>
 
-          <div class="oc-ov__stats">
-            <div v-for="it in statItems" :key="it.key" class="oc-ov__stat">
+          <div class="oc-ov__stats" role="group" aria-label="按状态筛选任务">
+            <button
+              v-for="it in statItems"
+              :key="it.key"
+              type="button"
+              class="oc-ov__stat"
+              :class="{ 'is-on': it.key !== 'total' && statusFilter === it.key }"
+              :aria-pressed="it.key === 'total' ? undefined : statusFilter === it.key"
+              :title="
+                it.key === 'total'
+                  ? '清除状态筛选'
+                  : statusFilter === it.key
+                    ? '再点一下清除筛选'
+                    : `只看${it.label}`
+              "
+              @click="toggleStatusChip(it.key)"
+            >
               <b class="oc-ov__n" :style="{ color: it.n ? it.color : 'var(--nat-text-weak)' }">{{ it.n }}</b>
               <span class="oc-ov__l">{{ it.label }}</span>
-            </div>
+            </button>
           </div>
 
           <div class="oc-ov__prog">
@@ -705,13 +886,25 @@ async function copySnippet() {
               <el-option
                 v-for="s in statusOptions"
                 :key="s"
-                :label="`${statusMeta(s).label} ${taskCounts[s]}`"
+                :label="`${statusMeta(s).label} ${s === 'running' ? taskCounts.running + taskCounts.dispatching : taskCounts[s]}`"
                 :value="s"
               />
+            </el-select>
+            <el-select
+              v-model="machineFilter"
+              class="oc-tools__machine"
+              placeholder="全部机器"
+              clearable
+              filterable
+            >
+              <el-option label="全部机器" value="" />
+              <el-option v-for="m in machineOptions" :key="m" :label="m" :value="m" />
             </el-select>
             <span class="muted oc-tools__count">{{ filtered.length }} / {{ tasks.length }}</span>
 
             <div class="oc-tools__end">
+              <el-button size="small" plain @click="copyShareLink">复制链接</el-button>
+              <el-button size="small" plain @click="exportJson">导出</el-button>
               <el-dropdown
                 split-button
                 type="primary"
@@ -827,6 +1020,18 @@ async function copySnippet() {
                   </el-tooltip>
                   <span v-if="row.operator" class="muted">{{ row.operator }}</span>
                 </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="判定 / 最后一行" min-width="200">
+              <template #default="{ row }">
+                <div v-if="verdictTitle(row)" class="verdict" :title="verdictTitle(row)">
+                  <span v-if="verdictOf(row).exit !== null" class="verdict__exit mono">
+                    exit {{ verdictOf(row).exit }}
+                  </span>
+                  <code v-if="verdictOf(row).text" class="cmd verdict__text">{{ verdictOf(row).text }}</code>
+                </div>
+                <span v-else class="muted">-</span>
               </template>
             </el-table-column>
 
@@ -1057,6 +1262,46 @@ async function copySnippet() {
   white-space: nowrap;
 }
 
+/* 搜索条下方的最近 requestId：占满一行的小标签，点了直接查 */
+.oc__recent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+
+.oc__recent-k {
+  flex: none;
+  color: var(--nat-text-weak);
+  font-size: 11.5px;
+}
+
+.oc__recent-id {
+  appearance: none;
+  max-width: 220px;
+  padding: 2px 8px;
+  border: 1px solid rgba(20, 18, 16, 0.14);
+  border-radius: 999px;
+  background: rgba(20, 18, 16, 0.03);
+  color: var(--nat-text-sub);
+  font-size: 11.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.oc__recent-id:hover,
+.oc__recent-id:focus-visible {
+  border-color: #1c1917;
+  background: rgba(20, 18, 16, 0.07);
+  color: #1c1917;
+}
+
 .oc__alert {
   margin-bottom: 12px;
 }
@@ -1098,7 +1343,7 @@ async function copySnippet() {
   background: currentColor;
 }
 
-/* 8 格数据仓：细分隔线，数字等宽对齐 */
+/* 8 格数据仓：细分隔线，数字等宽对齐；每格都是按钮，点了就是状态筛选 */
 .oc-ov__stats {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -1110,17 +1355,39 @@ async function copySnippet() {
 }
 
 .oc-ov__stat {
+  appearance: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
   min-width: 0;
   padding: 10px 6px 9px;
+  border: none;
   border-left: 1px solid rgba(20, 18, 16, 0.08);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 0.12s, box-shadow 0.12s;
 }
 
 .oc-ov__stat:first-child {
   border-left: none;
+}
+
+.oc-ov__stat:hover {
+  background: rgba(20, 18, 16, 0.045);
+}
+
+.oc-ov__stat:focus-visible {
+  outline: 2px solid #1c1917;
+  outline-offset: -2px;
+}
+
+/* 选中态：墨色内描边 + 轻填充，不发光 */
+.oc-ov__stat.is-on {
+  box-shadow: inset 0 0 0 1.5px #1c1917;
+  background: rgba(20, 18, 16, 0.06);
 }
 
 .oc-ov__n {
@@ -1241,6 +1508,10 @@ async function copySnippet() {
   width: 132px;
 }
 
+.oc-tools__machine {
+  width: 156px;
+}
+
 .oc-tools__count {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1252,6 +1523,11 @@ async function copySnippet() {
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+/* 间距交给 gap，去掉相邻按钮自带的 margin */
+.oc-tools__end :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 /* ------------------------------------------------------------ 表格 */
@@ -1295,6 +1571,32 @@ async function copySnippet() {
 
 .machine {
   font-size: 12px;
+  color: var(--nat-text-sub);
+}
+
+/* 判定列：exit 码小标 + 最后一行/命中原因，超长省略靠 title 看全 */
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.verdict__exit {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid rgba(20, 18, 16, 0.14);
+  border-radius: 4px;
+  background: rgba(20, 18, 16, 0.04);
+  color: var(--nat-text-sub);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.verdict__text {
+  flex: 1;
+  min-width: 0;
   color: var(--nat-text-sub);
 }
 
