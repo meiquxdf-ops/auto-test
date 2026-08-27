@@ -288,13 +288,14 @@ public class AgentSessionService {
             }
         }
 
-        agentRepository.findById(agentId).ifPresent(agent -> {
+        AgentEntity agent = agentRepository.findById(agentId).orElse(null);
+        if (agent != null) {
             agent.setLastHeartbeatAt(now);
             agent.setRunningCount(reported.size());
             agent.setStatus(AgentStatus.ONLINE);
             agent.setUpdatedAt(now);
             agentRepository.save(agent);
-        });
+        }
 
         Set<String> pendingCancels = new LinkedHashSet<>();
         for (String executeId : reported) {
@@ -317,6 +318,11 @@ public class AgentSessionService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("serverTime", System.currentTimeMillis());
         result.put("leaseSec", props.getDispatch().getLeaseSec());
+        if (agent != null) {
+            // a PATCHed concurrency must reach the connected agent, not only the next hello;
+            // the agent ignores the value while busy and applies it once idle
+            result.put("concurrency", agent.getConcurrency());
+        }
         result.put("cancel", pendingCancels);
         conn.reply(env.id, result);
     }

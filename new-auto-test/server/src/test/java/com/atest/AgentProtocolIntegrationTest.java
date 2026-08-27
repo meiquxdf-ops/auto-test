@@ -21,6 +21,7 @@ import com.atest.domain.ExecutionStatus;
 import com.atest.domain.TaskExecutionEntity;
 import com.atest.repo.AgentRepository;
 import com.atest.repo.TaskExecutionRepository;
+import com.atest.service.AgentService;
 import com.atest.service.DispatchService;
 import com.atest.service.LogService;
 import com.atest.service.TaskService;
@@ -28,6 +29,7 @@ import com.atest.tcp.AgentTcpServer;
 import com.atest.tcp.Envelope;
 import com.atest.tcp.ErrorCodes;
 import com.atest.web.dto.CreateTaskRequest;
+import com.atest.web.dto.PatchAgentRequest;
 import com.atest.web.dto.TaskView;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,8 @@ class AgentProtocolIntegrationTest {
     private AgentRepository agentRepository;
     @Autowired
     private LogService logService;
+    @Autowired
+    private AgentService agentService;
 
     @Test
     void fullRunEndsInPassFromFin() throws Exception {
@@ -140,6 +144,34 @@ class AgentProtocolIntegrationTest {
             assertThat(again.hello("agent-lost", List.of()).isOk()).isTrue();
         }
         assertThat(statusOf(executeId)).isEqualTo(ExecutionStatus.EXCEPTION);
+    }
+
+    /**
+     * PATCH /api/agents/{id} {concurrency} is accepted while the agent is idle, and the
+     * dispatcher starts using the new value immediately. The connected agent only learns its
+     * concurrency from the ControlResult of hello/hb frames, so the next heartbeat reply must
+     * carry the patched value — otherwise the agent keeps enforcing the old limit and rejects
+     * the extra dispatches with "busy" until it reconnects.
+     */
+    @Test
+    void patchedConcurrencyIsDeliveredOnTheNextHeartbeat() throws Exception {
+        try (TestAgent agent = new TestAgent(tcpServer.boundPort())) {
+            Envelope hello = agent.hello("agent-conc", List.of());
+            assertThat(hello.isOk()).isTrue();
+            assertThat(hello.result().get("concurrency").asInt()).isEqualTo(1);
+
+            PatchAgentRequest patch = new PatchAgentRequest();
+            patch.setConcurrency(3);
+            assertThat(agentService.patch("agent-conc", patch).concurrency()).isEqualTo(3);
+
+            Envelope hb = agent.request("hb", Map.of("running", List.of()));
+            assertThat(hb.isOk()).isTrue();
+            JsonNode concurrency = hb.result().get("concurrency");
+            assertThat(concurrency)
+                    .as("hb reply must carry the patched concurrency so a connected agent applies it")
+                    .isNotNull();
+            assertThat(concurrency.asInt()).isEqualTo(3);
+        }
     }
 
     private ExecutionStatus statusOf(String executeId) {
