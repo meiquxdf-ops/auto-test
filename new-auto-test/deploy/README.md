@@ -128,7 +128,7 @@ sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 \
 4. 安装二进制到 `/usr/local/bin/atagent`（先写 `.new` 再 `mv`，避免 ETXTBSY）。
 5. 生成 `agent-id`：`$DATA_DIR/agent-id` 存在就沿用，不存在才生成 UUID（`/proc/sys/kernel/random/uuid` → `uuidgen` → `/dev/urandom` 兜底）。
 6. 写 `/etc/atagent/config.yaml`，旧文件备份成 `config.yaml.bak.<时间戳>`。
-7. 用 `atagent.service` 模板渲染 `/etc/systemd/system/atagent.service`，`daemon-reload` + `enable --now`，再确认 `is-active`，起不来直接打 `status` 并以非 0 退出。
+7. **仅当机器在跑 systemd 时**（有 `systemctl` 且存在 `/run/systemd/system`）：先确保 `/etc/systemd/system` 目录存在，再用 `atagent.service` 模板渲染 `/etc/systemd/system/atagent.service`，`daemon-reload` + `enable --now`，最后确认 `is-active`，起不来直接打 `status` 并以非 0 退出。没有 systemd 的机器（容器、WSL、OpenRC …）不写 unit、不 enable/start，脚本打警告并给出手动前台启动命令 `atagent run --config /etc/atagent/config.yaml`，二进制与配置照常落盘、脚本正常退出。
 8. **等注册**：用 `atagent status -json` 轮询 `connected`（最多 20s）。`is-active` 只说明进程活着——tag 重名（`tag_conflict`）或 9800 不通时服务照样 active、一直重连，机器却永远不会在 机器列表 上线。连不上时脚本打出排查提示（journal、`nc -vz`、换 tag）并以非 0 退出；文件已落盘、服务会持续重试，修复原因后重跑脚本即可。
 
 脚本可以重复执行，重装/升级不会换掉机器身份。

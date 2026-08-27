@@ -343,6 +343,9 @@ log "配置已写入: $CONF_FILE"
 render_unit() {
     local tpl="${SCRIPT_DIR}/atagent.service"
     [[ -f "$tpl" ]] || die "找不到 unit 模板: $tpl（请连同 deploy/ 目录一起拷贝到目标机）"
+    # 容器 / WSL / 精简系统可能没有 /etc/systemd/system；
+    # set -e 下重定向到不存在的目录会把已装好二进制和配置的安装打断
+    install -d -m 0755 "$(dirname "$UNIT_FILE")"
     sed -e "s#@BIN@#${INSTALL_BIN}#g" \
         -e "s#@CONFIG@#${CONF_FILE}#g" \
         -e "s#@DATA_DIR@#${DATA_DIR}#g" \
@@ -351,8 +354,14 @@ render_unit() {
     chmod 0644 "$UNIT_FILE"
 }
 
-render_unit
-log "systemd unit 已写入: $UNIT_FILE"
+# 与下面的 enable/start 用同一个 systemd 判定：没有 systemd 就既不写 unit 也不失败，
+# 二进制和配置已经落盘，提示手动前台启动即可
+if systemd_or_skip; then
+    render_unit
+    log "systemd unit 已写入: $UNIT_FILE"
+else
+    warn "当前系统没有运行 systemd（缺 systemctl 或 /run/systemd/system），跳过 unit 写入"
+fi
 
 # is-active 只说明进程活着。tag 重名（tag_conflict）或 9800 不通时，
 # Agent 会一直重连、服务照样 active，但机器永远不会在 机器列表 里上线。

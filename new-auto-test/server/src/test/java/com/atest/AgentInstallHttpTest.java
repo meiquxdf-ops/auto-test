@@ -88,6 +88,9 @@ class AgentInstallHttpTest {
         // deploy/install.sh 的特征内容：unit 渲染与注册验证
         assertThat(res.getBody()).contains("SERVICE_NAME=\"atagent\"");
         assertThat(res.getBody()).contains("verify_registered");
+        // 写 unit 前必须先建 /etc/systemd/system：没有该目录的机器（容器/WSL/无 systemd）
+        // 曾在 render_unit 的重定向处直接被 set -e 打断（"No such file or directory"）
+        assertThat(res.getBody()).contains("install -d -m 0755 \"$(dirname \"$UNIT_FILE\")\"");
     }
 
     @Test
