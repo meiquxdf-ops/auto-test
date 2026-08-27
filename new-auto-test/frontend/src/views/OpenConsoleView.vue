@@ -614,7 +614,7 @@ async function copySnippet() {
       <template v-if="viewState === 'result'">
         <el-alert v-if="refreshError" type="error" :closable="false" show-icon :title="refreshError" class="oc__alert" />
 
-        <!-- 概览：HUD 式指挥台 -->
+        <!-- 概览 -->
         <section class="panel oc-ov">
           <div class="oc-ov__head">
             <span
@@ -967,25 +967,10 @@ async function copySnippet() {
 <style scoped>
 /* ------------------------------------------------------------ 画布 */
 
-/* 暗色指挥台画布：纯色底 + 低透明度网格线（只用 repeating-linear-gradient，无滤镜/模糊） */
+/* 暗色画布：纯色平底，不加网格/纹理/滤镜 */
 .oc {
   min-height: 100%;
-  background-color: #070b14;
-  background-image:
-    repeating-linear-gradient(
-      0deg,
-      rgba(148, 163, 184, 0.05) 0,
-      rgba(148, 163, 184, 0.05) 1px,
-      transparent 1px,
-      transparent 48px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      rgba(148, 163, 184, 0.05) 0,
-      rgba(148, 163, 184, 0.05) 1px,
-      transparent 1px,
-      transparent 48px
-    );
+  background-color: #111113;
 }
 
 /* 嵌入态：宿主已有标题与留白，页内只留必要间距 */
@@ -1054,9 +1039,9 @@ async function copySnippet() {
   max-width: 280px;
   min-width: 0;
   padding: 3px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
-  background: rgba(148, 163, 184, 0.08);
+  background: rgba(255, 255, 255, 0.05);
   font-size: 12px;
 }
 
@@ -1076,7 +1061,7 @@ async function copySnippet() {
   margin-bottom: 12px;
 }
 
-/* ------------------------------------------------------------ 概览 HUD */
+/* ------------------------------------------------------------ 概览 */
 
 .oc-ov {
   padding: 16px 18px;
@@ -1090,7 +1075,7 @@ async function copySnippet() {
   flex-wrap: wrap;
 }
 
-/* 总体状态：发光胶囊。语义色来自行内样式，光晕用单层 box-shadow，不用 filter */
+/* 总体状态胶囊：语义色来自行内样式，只有边框 + 填充，不发光 */
 .oc-ov__badge {
   flex: none;
   display: inline-flex;
@@ -1103,7 +1088,6 @@ async function copySnippet() {
   font-size: 13px;
   font-weight: 640;
   letter-spacing: 0.02em;
-  box-shadow: 0 0 18px -6px currentColor;
 }
 
 .oc-ov__badge-dot {
@@ -1119,9 +1103,9 @@ async function copySnippet() {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
   margin-top: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
-  background: rgba(148, 163, 184, 0.04);
+  background: rgba(255, 255, 255, 0.03);
   overflow: hidden;
 }
 
@@ -1132,7 +1116,7 @@ async function copySnippet() {
   gap: 2px;
   min-width: 0;
   padding: 10px 6px 9px;
-  border-left: 1px solid rgba(148, 163, 184, 0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .oc-ov__stat:first-child {
@@ -1159,7 +1143,7 @@ async function copySnippet() {
   }
 
   .oc-ov__stat {
-    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .oc-ov__stat:nth-child(-n + 4) {
@@ -1183,14 +1167,13 @@ async function copySnippet() {
   min-width: 120px;
 }
 
-/* 发光进度轨：CSS 渐变填充 + 单层弱光晕 */
+/* 进度轨：纯色填充，不加渐变和光晕 */
 .oc-ov__prog-bar :deep(.el-progress-bar__outer) {
-  background: rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .oc-ov__prog-bar :deep(.el-progress-bar__inner) {
-  background: linear-gradient(90deg, #3b82f6, #2ee9d0);
-  box-shadow: 0 0 12px -3px rgba(46, 233, 208, 0.55);
+  background: #3b82f6;
 }
 
 .oc-ov__prog-num {
@@ -1234,7 +1217,7 @@ async function copySnippet() {
 }
 
 .oc-ov__live {
-  color: #2ee9d0;
+  color: #60a5fa;
   font-size: 12px;
 }
 
@@ -1277,7 +1260,7 @@ async function copySnippet() {
   display: block;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12.5px;
-  color: #c7d7ea;
+  color: #d4d4d8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1306,7 +1289,7 @@ async function copySnippet() {
 }
 
 .time-live {
-  color: #2ee9d0;
+  color: #60a5fa;
   font-size: 12px;
 }
 
@@ -1330,7 +1313,7 @@ async function copySnippet() {
 
 .acts :deep(.el-button.is-text),
 .acts :deep(.el-button.is-link) {
-  color: #2ee9d0;
+  color: #60a5fa;
 }
 
 .acts :deep(.el-button.is-text.el-button--danger) {
@@ -1341,11 +1324,11 @@ async function copySnippet() {
 
 :deep(.el-table__expanded-cell) {
   padding: 0;
-  background: #0a101b;
+  background: #111113;
 }
 
 :deep(.el-table__expanded-cell:hover) {
-  background: #0a101b !important;
+  background: #111113 !important;
 }
 
 .detail {
@@ -1390,18 +1373,18 @@ async function copySnippet() {
 
 /* EmptyState 的浅色图标底在暗色画布上换成半透明层 */
 .oc :deep(.empty__icon) {
-  background: rgba(148, 163, 184, 0.1);
-  color: #8b9cb3;
+  background: rgba(255, 255, 255, 0.06);
+  color: #71717a;
 }
 
 .oc :deep(.empty__icon--error) {
-  background: rgba(248, 113, 113, 0.12);
+  background: rgba(248, 113, 113, 0.1);
   color: #f87171;
 }
 
 .oc :deep(.empty__icon--search) {
-  background: rgba(46, 233, 208, 0.1);
-  color: #2ee9d0;
+  background: rgba(96, 165, 250, 0.1);
+  color: #60a5fa;
 }
 
 /* ------------------------------------------------------------ 空态 / 速览 */
@@ -1428,12 +1411,12 @@ async function copySnippet() {
   line-height: 1.95;
 }
 
-/* 终端卡片：纯色深底 + 青色发丝线 */
+/* 终端卡片：纯色深底 + 中性发丝线 */
 .oc__code {
   position: relative;
   border: 1px solid var(--nat-hairline);
   border-radius: 10px;
-  background: #05080f;
+  background: #0c0c0e;
 }
 
 .oc__copy {
@@ -1449,7 +1432,7 @@ async function copySnippet() {
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.75;
-  color: #b9cadf;
+  color: #a1a1aa;
   white-space: pre-wrap;
   word-break: break-word;
 }

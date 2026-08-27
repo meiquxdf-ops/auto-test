@@ -160,16 +160,16 @@ function gotoFull() {
 
 /* 时间线卡片写死了白底，在暗色抽屉里换成深色面 */
 .drawer :deep(.tl__card) {
-  background: #0a111e;
+  background: #1f1f23;
   box-shadow: none;
 }
 
 .drawer :deep(.tl__node) {
-  border-color: #0d1422;
+  border-color: #18181b;
 }
 
 .drawer :deep(.empty__icon) {
-  background: rgba(148, 163, 184, 0.1);
-  color: #8b9cb3;
+  background: rgba(255, 255, 255, 0.06);
+  color: #71717a;
 }
 </style>
