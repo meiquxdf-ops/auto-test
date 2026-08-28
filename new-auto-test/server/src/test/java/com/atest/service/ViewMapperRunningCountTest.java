@@ -10,6 +10,7 @@ import java.time.Instant;
 
 import com.atest.config.AtestProperties;
 import com.atest.domain.AgentEntity;
+import com.atest.repo.TaskAttachmentRepository;
 import com.atest.repo.TaskExecutionRepository;
 import com.atest.tcp.AgentRegistry;
 import com.atest.web.dto.AgentView;
@@ -37,7 +38,7 @@ class ViewMapperRunningCountTest {
         when(registry.isOnline("vm-agent")).thenReturn(true);
         TaskExecutionRepository repo = mock(TaskExecutionRepository.class);
         when(repo.countByAgentIdAndStatusIn(eq("vm-agent"), anyCollection())).thenReturn(liveActiveCount);
-        return new ViewMapper(new AtestProperties(), registry, repo);
+        return new ViewMapper(new AtestProperties(), registry, repo, mock(TaskAttachmentRepository.class));
     }
 
     @Test

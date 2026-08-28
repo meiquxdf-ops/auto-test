@@ -15,6 +15,7 @@ import com.atest.domain.DispatchEventEntity;
 import com.atest.domain.ExecutionStatus;
 import com.atest.domain.TaskEntity;
 import com.atest.domain.TaskExecutionEntity;
+import com.atest.repo.TaskAttachmentRepository;
 import com.atest.repo.TaskExecutionRepository;
 import com.atest.tcp.AgentRegistry;
 import com.atest.web.dto.AgentView;
@@ -30,11 +31,25 @@ public class ViewMapper {
     private final AtestProperties props;
     private final AgentRegistry registry;
     private final TaskExecutionRepository executionRepository;
+    private final TaskAttachmentRepository attachmentRepository;
 
-    public ViewMapper(AtestProperties props, AgentRegistry registry, TaskExecutionRepository executionRepository) {
+    public ViewMapper(AtestProperties props, AgentRegistry registry, TaskExecutionRepository executionRepository,
+                      TaskAttachmentRepository attachmentRepository) {
         this.props = props;
         this.registry = registry;
         this.executionRepository = executionRepository;
+        this.attachmentRepository = attachmentRepository;
+    }
+
+    /** 一批任务的附件数（taskId -> count），列表页避免逐行 count。 */
+    public Map<Long, Long> attachmentCounts(List<Long> taskIds) {
+        Map<Long, Long> counts = new HashMap<>();
+        if (taskIds != null && !taskIds.isEmpty()) {
+            for (Object[] row : attachmentRepository.countByTaskIdGrouped(taskIds)) {
+                counts.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+            }
+        }
+        return counts;
     }
 
     public Map<String, Integer> activeCounts() {
@@ -115,7 +130,14 @@ public class ViewMapper {
                 e.getUpdatedAt());
     }
 
+    /** 没有批量附件计数时逐条查一次（单任务详情 / 创建返回等低频路径）。 */
     public TaskView toTaskView(TaskEntity task, List<TaskExecutionEntity> executions, boolean includeExecutions) {
+        return toTaskView(task, executions, includeExecutions,
+                attachmentRepository.countByTaskId(task.getId()));
+    }
+
+    public TaskView toTaskView(TaskEntity task, List<TaskExecutionEntity> executions, boolean includeExecutions,
+                               long attachmentCount) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (TaskExecutionEntity e : executions) {
             counts.merge(e.getStatus().wire(), 1L, Long::sum);
@@ -158,6 +180,7 @@ public class ViewMapper {
                 task.getCallbackLastError(),
                 task.getCallbackLastAt(),
                 counts,
+                attachmentCount,
                 includeExecutions ? views : null,
                 task.getCreatedAt(),
                 task.getUpdatedAt());

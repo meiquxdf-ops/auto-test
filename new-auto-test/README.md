@@ -124,6 +124,10 @@ make test         # Server mvn test + Agent go test ./...
 - **队列**：只能调 **pending** 的顺序，不抢占在跑的；不自动重试。
 - **并发**：每机默认 1、最大 4，仅空闲时可改。
 - **日志**：每次执行上限 **5MB（保留尾部）**，超出即截断，API/SSE/页面都会明确标出。
+- **附件**：脚本在测试机上用 `curl -F "file=@产物" "$ATEST_HTTP_BASE/api/executions/$ATEST_EXECUTE_ID/files"`
+  把产物回传 Server（单文件 ≤ **32MB**，存 Server 本地磁盘 `./data/attachments/`）；
+  任务页 / 开放查询页可看数量、下载与预览。多机部署需把 `atest.http.public-base`
+  配成 Agent 可达的 Server 地址。
 
 ## 出问题了？
 

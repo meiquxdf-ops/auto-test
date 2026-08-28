@@ -33,6 +33,23 @@ public class ExecutorConfig {
                 new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
+    /**
+     * Attachment disk writes. Bounded on purpose: at most {@code maxConcurrent} files being
+     * written, at most {@code queueCapacity} waiting, everything beyond is rejected (429 at the
+     * HTTP layer). AbortPolicy — never CallerRuns, that would drag the copy back onto the Tomcat
+     * request thread and defeat the whole point.
+     */
+    @Bean(name = "uploadExecutor", destroyMethod = "shutdown")
+    public ExecutorService uploadExecutor(AtestProperties props) {
+        int workers = Math.max(1, props.getAttachments().getMaxConcurrent());
+        int queue = Math.max(1, props.getAttachments().getQueueCapacity());
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(workers, workers, 60, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(queue), namedFactory("upload-"),
+                new ThreadPoolExecutor.AbortPolicy());
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
     @Bean(name = "sseHeartbeatScheduler", destroyMethod = "shutdown")
     public ScheduledExecutorService sseHeartbeatScheduler() {
         return Executors.newSingleThreadScheduledExecutor(namedFactory("sse-hb-"));

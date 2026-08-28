@@ -17,6 +17,8 @@ public class AtestProperties {
     private final Dispatch dispatch = new Dispatch();
     private final Sse sse = new Sse();
     private final Callback callback = new Callback();
+    private final Attachments attachments = new Attachments();
+    private final Http http = new Http();
 
     @Getter
     @Setter
@@ -82,6 +84,30 @@ public class AtestProperties {
         private int queueCapacity = 2000;
         private long heartbeatMs = 15000;
         private long emitterTimeoutMs = 0;
+    }
+
+    /**
+     * 附件：脚本把测试机上的产物文件 POST 回 Server，存 Server 本地磁盘。
+     * 上传的落盘 + 建档在专用有界线程池里做，绝不占着 Tomcat 请求线程等磁盘；
+     * 超出准入水位（maxConcurrent + queueCapacity）的上传直接 429，突发不压垮 HTTP 池。
+     */
+    @Getter
+    @Setter
+    public static class Attachments {
+        private String dir = "./data/attachments";
+        /** 单文件硬上限（默认 32MB），与 spring.servlet.multipart.max-file-size 双保险 */
+        private long maxBytes = 32L * 1024 * 1024;
+        /** 同时在落盘的上传数上限（专用线程池大小） */
+        private int maxConcurrent = 8;
+        /** 落盘线程池前的等待队列长度，排满即 429 */
+        private int queueCapacity = 8;
+    }
+
+    /** Agent 上脚本回连 Server HTTP 面用的地址，随任务注入为 ATEST_HTTP_BASE。 */
+    @Getter
+    @Setter
+    public static class Http {
+        private String publicBase = "http://127.0.0.1:8080";
     }
 
     /** 任务终态回调（开放 API）：POST callbackUrl，2xx 算成功，失败按退避重试后置 failed。 */

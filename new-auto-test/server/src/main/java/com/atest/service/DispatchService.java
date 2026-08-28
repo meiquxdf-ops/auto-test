@@ -185,12 +185,20 @@ public class DispatchService {
 
     @SuppressWarnings("unchecked")
     private Map<String, String> envMap(TaskEntity task) {
+        Map<String, String> env = new LinkedHashMap<>();
         JsonNode node = Json.read(task.getEnv());
-        if (node == null || !node.isObject()) {
-            return Map.of();
+        if (node != null && node.isObject()) {
+            Map<String, String> parsed = Json.convert(node, Map.class);
+            if (parsed != null) {
+                env.putAll(parsed);
+            }
         }
-        Map<String, String> env = Json.convert(node, Map.class);
-        return env == null ? Map.of() : env;
+        // 脚本回传附件用的 Server HTTP 地址（atest.http.public-base）。任务 env 显式给了就尊重任务的
+        String publicBase = props.getHttp().getPublicBase();
+        if (publicBase != null && !publicBase.isBlank()) {
+            env.putIfAbsent("ATEST_HTTP_BASE", publicBase.replaceAll("/+$", ""));
+        }
+        return env;
     }
 
     /** User cancel or watchdog timeout; the agent kills the whole process group by token. */

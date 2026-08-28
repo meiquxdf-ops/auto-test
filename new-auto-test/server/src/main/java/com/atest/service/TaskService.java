@@ -403,8 +403,10 @@ public class TaskService {
                 byTask.computeIfAbsent(exec.getTaskId(), k -> new ArrayList<>()).add(exec);
             }
         }
+        Map<Long, Long> attachmentCounts = viewMapper.attachmentCounts(ids);
         List<TaskView> items = tasks.getContent().stream()
-                .map(t -> viewMapper.toTaskView(t, byTask.getOrDefault(t.getId(), List.of()), includeExecutions))
+                .map(t -> viewMapper.toTaskView(t, byTask.getOrDefault(t.getId(), List.of()), includeExecutions,
+                        attachmentCounts.getOrDefault(t.getId(), 0L)))
                 .toList();
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -437,8 +439,10 @@ public class TaskService {
                 byTask.computeIfAbsent(exec.getTaskId(), k -> new ArrayList<>()).add(exec);
             }
         }
+        Map<Long, Long> attachmentCounts = viewMapper.attachmentCounts(ids);
         List<TaskView> items = tasks.stream()
-                .map(t -> viewMapper.toTaskView(t, byTask.getOrDefault(t.getId(), List.of()), includeExecutions))
+                .map(t -> viewMapper.toTaskView(t, byTask.getOrDefault(t.getId(), List.of()), includeExecutions,
+                        attachmentCounts.getOrDefault(t.getId(), 0L)))
                 .toList();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("requestId", v);

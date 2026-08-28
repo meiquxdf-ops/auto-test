@@ -28,6 +28,7 @@ public record TaskView(
         String callbackLastError,
         Instant callbackLastAt,
         Map<String, Long> statusCounts,
+        long attachmentCount,
         List<ExecutionView> executions,
         Instant createdAt,
         Instant updatedAt) {

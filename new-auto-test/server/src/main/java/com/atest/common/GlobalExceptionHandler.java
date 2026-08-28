@@ -3,6 +3,7 @@ package com.atest.common;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,6 +14,9 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
@@ -45,6 +49,31 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Void> handleClientAbort(Exception e, HttpServletRequest req) {
         log.debug("client aborted {} {}: {}", req.getMethod(), req.getRequestURI(), e.toString());
         return ResponseEntity.ok().build();
+    }
+
+    /** 附件超过 32MB：容器在解析 multipart 时边收边计数、超限即中止，这里翻译成 413。 */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleUploadTooLarge(MaxUploadSizeExceededException e,
+                                                                    HttpServletRequest req) {
+        return build(HttpStatus.PAYLOAD_TOO_LARGE, "file_too_large", "文件超过单附件上限（32MB）", req);
+    }
+
+    /** 缺 file 字段 / multipart 体损坏都是调用方问题，不是 500。 */
+    @ExceptionHandler({MissingServletRequestPartException.class, MultipartException.class})
+    public ResponseEntity<Map<String, Object>> handleBadMultipart(Exception e, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "bad_request", e.getMessage(), req);
+    }
+
+    /** 异步接口（CompletableFuture）里抛出的业务异常可能包一层 CompletionException，剥掉再走既有映射。 */
+    @ExceptionHandler(CompletionException.class)
+    public ResponseEntity<Map<String, Object>> handleCompletion(CompletionException e, HttpServletRequest req) {
+        Throwable cause = e.getCause();
+        if (cause instanceof ApiException api) {
+            return handleApi(api, req);
+        }
+        log.error("unhandled async error on {} {}", req.getMethod(), req.getRequestURI(), e);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error",
+                String.valueOf((cause == null ? e : cause).getMessage()), req);
     }
 
     /** An unmatched path is a routine 404; without this the catch-all turns it into a 500. */

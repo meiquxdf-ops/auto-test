@@ -38,6 +38,13 @@ spring:
   mvc:
     async:
       request-timeout: -1
+  servlet:
+    multipart:
+      # 附件单文件硬上限 32MB：容器边收边计数，超限即中止，不会把整个请求吞进堆。
+      # max-request-size 略大于单文件上限，留出 multipart 边界/头的开销，
+      # 使恰好 32MB 的合法文件不会被整包大小误杀。
+      max-file-size: 32MB
+      max-request-size: 33MB
   jackson:
     # keep nulls in REST payloads so the UI always sees the same field set
     default-property-inclusion: always
@@ -103,6 +110,18 @@ atest:
     backoff-base-ms: 1000
     timeout-ms: 10000
     sweep-interval-ms: 30000
+  # 附件：脚本用 $ATEST_HTTP_BASE POST 回 Server，落 Server 本地磁盘（不是对象存储）。
+  # 单文件硬上限 32MB；落盘走专用有界线程池，超出准入水位（max-concurrent + queue-capacity）
+  # 的上传直接 429，磁盘/IO 故障 503，绝不把 Tomcat 请求线程压在磁盘 I/O 上。
+  attachments:
+    dir: ./data/attachments
+    max-bytes: 33554432
+    max-concurrent: 8
+    queue-capacity: 8
+  # 注入到每次下发 env 的 ATEST_HTTP_BASE：Agent 上的脚本用它回传附件。
+  # 多机部署时必须改成 Agent 能路由到的 Server 地址（如 http://10.0.0.5:8080）。
+  http:
+    public-base: http://127.0.0.1:8080
 
 logging:
   level:

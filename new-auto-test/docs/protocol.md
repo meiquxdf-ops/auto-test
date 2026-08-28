@@ -12,7 +12,9 @@
 - 默认一机一任务，可配最大 4；仅空闲时可改并发
 - 只调未开始任务的顺序；不抢占正在跑的
 - 不自动重试
-- 附件不做
+- 附件：单文件 ≤ 32MB，存 Server 本地磁盘（`atest.attachments.dir`，默认 `./data/attachments/`），
+  元数据独立表 `task_attachment`；上传落盘走专用有界线程池（默认并发 8 + 队列 8），
+  超出直接 429，磁盘/IO 故障 503，不占用 Tomcat 请求线程等磁盘
 
 ## 身份
 
@@ -66,6 +68,26 @@
 - `GET /api/timeline?agentId=&executeId=`
 - `GET /api/sse/agents` snapshot+patch
 - `GET /api/sse/exec/{id}?from=` 日志
+- `POST /api/executions/{executeId}/files` multipart 字段 `file`：脚本回传附件（≤ 32MB），
+  executeId 未知则 404
+- `POST /api/tasks/{taskId}/files` multipart 字段 `file`：运维台/开放调用直接给任务补附件
+- `GET /api/tasks/{taskId}/files` 附件元数据列表（id, name, size, contentType, executeId, createdAt）
+- `GET /api/files/{fileId}` 下载（Content-Disposition: attachment；UI 预览图片/文本加 `?inline=1`）
+
+### 附件回传（脚本视角）
+
+下发时 Server 会把 `ATEST_HTTP_BASE`（配置 `atest.http.public-base`，默认
+`http://127.0.0.1:8080`，多机部署必须改成 Agent 可达的地址）注入执行环境，
+Agent 已注入 `ATEST_EXECUTE_ID` / `ATEST_TASK_ID`，脚本一行即可回传：
+
+```bash
+curl -sf -F "file=@report.tar.gz" \
+  "$ATEST_HTTP_BASE/api/executions/$ATEST_EXECUTE_ID/files"
+```
+
+- 单文件硬上限 32MB（容器层 `spring.servlet.multipart` 与应用层 `atest.attachments.max-bytes` 双保险），超限 413
+- 上传并发有准入水位（默认 8 在写 + 8 排队），超出 429，稍后重试；磁盘故障 503
+- 文件名消毒后落盘为 `{uuid}-{safeName}`，原始名存 DB 用于展示与下载头
 
 ## 状态机
 
