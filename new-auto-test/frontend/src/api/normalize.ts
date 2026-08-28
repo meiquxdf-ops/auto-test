@@ -331,6 +331,7 @@ export function normalizeTask(input: unknown): Task {
     operator: optStr(o, ['operator', 'creator', 'owner', 'user']),
     timeoutSec: optNum(o, ['timeoutSec', 'timeout', 'timeout_sec']),
     priority: optNum(o, ['priority', 'order', 'seq', 'queueIndex']),
+    queueOrder: optNum(o, ['queueOrder', 'queue_order']),
     status,
     targets: targets.length ? targets : executions.map((e) => e.displayTag || e.agentId || '').filter(Boolean),
     conditionConfig: normalizeConditionConfig(pick(o, ['conditionConfig', 'condition_config', 'condition'])),
