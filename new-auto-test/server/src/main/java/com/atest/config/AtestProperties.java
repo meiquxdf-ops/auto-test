@@ -127,6 +127,13 @@ public class AtestProperties {
          * 非空 = 只允许名单内的主机（显式列出的内网主机也放行）。
          */
         private java.util.List<String> allowedHosts = new java.util.ArrayList<>();
+        /**
+         * 回调签名密钥（可选）：非空时每次回调 POST 都带 HMAC-SHA256(body) 签名头
+         * X-Atest-Signature（hex）与 X-Hub-Signature-256（sha256=hex），
+         * 接收方（如 Chaos）用同一密钥验签即可确认回调确实来自本 Server 且未被篡改。
+         * 留空 = 不加任何签名头（向后兼容，默认行为不变）。
+         */
+        private String hmacSecret = "";
         /** total delivery attempts before the callback is marked failed: 1 initial + 5 retries */
         private int maxAttempts = 6;
         /** wait before attempt N+1 is backoffBaseMs << (N-1): 1s, 2s, 4s, 8s, 16s */

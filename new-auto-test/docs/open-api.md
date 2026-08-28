@@ -185,6 +185,24 @@ curl "$BASE/api/executions/{executeId}/logs?from=0&limit=1000"
 
 响应带 `lines[]` 与游标，翻页直到取完；单次执行日志上限 5MB（超出保留尾部并标注截断）。
 
+**回调验签（可选）**：Server 配置了 `atest.callback.hmac-secret` 时，每次回调 POST 都带
+两个签名头（未配置则一个都没有，行为与现在完全一致）：
+
+| 头 | 值 |
+|---|---|
+| `X-Atest-Signature` | `HMAC-SHA256(secret, 原始请求体字节)` 的小写 hex |
+| `X-Hub-Signature-256` | 同一摘要的 GitHub webhook 风格：`sha256=<hex>` |
+
+接收方验签：用与运维约定的同一密钥，对**收到的原始 body 字节**（先别做 JSON
+反序列化再序列化，字节要原样）重算 HMAC-SHA256 并与签名头比对（建议常量时间比较）。
+Python 示例：
+
+```python
+import hashlib, hmac
+expected = hmac.new(secret.encode(), raw_body_bytes, hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, request.headers["X-Atest-Signature"])
+```
+
 其他要点：回调是**每次到终态一次**——inplace 重跑后再次到终态会再发一次；单次投递
 超时 10s；回调地址要能被 **Server** 访问到（是 Server 发起的出站 POST）。
 

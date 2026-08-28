@@ -125,6 +125,11 @@ atest:
     #   - cb.chaos.internal
     #   - 10.9.0.0/16
     allowed-hosts: []
+    # 回调签名密钥（可选）：非空时每次回调 POST 带 HMAC-SHA256(body) 签名头
+    # X-Atest-Signature（hex）与 X-Hub-Signature-256（sha256=hex），接收方（如 Chaos）
+    # 用同一密钥对收到的原始 body 重算并比对即可验签。留空 = 不加签名头（保持兼容）。
+    # 生产建议通过环境变量注入：ATEST_CALLBACK_HMAC_SECRET=<随机长串>
+    hmac-secret: ""
     max-attempts: 6
     backoff-base-ms: 1000
     timeout-ms: 10000

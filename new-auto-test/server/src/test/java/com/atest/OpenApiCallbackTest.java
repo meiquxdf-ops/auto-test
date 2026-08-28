@@ -75,12 +75,14 @@ class OpenApiCallbackTest {
     private static final AtomicInteger okHits = new AtomicInteger();
     private static final AtomicInteger failHits = new AtomicInteger();
     private static final AtomicReference<String> lastOkBody = new AtomicReference<>();
+    private static final AtomicReference<String> lastOkSignature = new AtomicReference<>();
 
     @BeforeAll
     static void startCallbackServer() throws IOException {
         callbackServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         callbackServer.createContext("/ok", exchange -> {
             lastOkBody.set(readBody(exchange.getRequestBody()));
+            lastOkSignature.set(exchange.getRequestHeaders().getFirst("X-Atest-Signature"));
             okHits.incrementAndGet();
             exchange.sendResponseHeaders(200, -1);
             exchange.close();
@@ -344,6 +346,9 @@ class OpenApiCallbackTest {
         assertThat(first.get("executeId").asText()).isNotBlank();
         assertThat(first.get("agentTag").asText()).isEqualTo("open-agent-a");
         assertThat(first.get("status").asText()).isEqualTo("pass");
+
+        // no hmac-secret configured (the default) -> no signature header at all
+        assertThat(lastOkSignature.get()).isNull();
     }
 
     @Test
