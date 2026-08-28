@@ -8,9 +8,16 @@ import java.util.stream.Collectors;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.TypeMismatchException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -62,6 +69,45 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({MissingServletRequestPartException.class, MultipartException.class})
     public ResponseEntity<Map<String, Object>> handleBadMultipart(Exception e, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "bad_request", e.getMessage(), req);
+    }
+
+    /**
+     * 路径/查询参数类型不符（{@code /api/files/abc}、{@code ?page=abc}）与请求体读不出来
+     * （JSON 语法错、body 为空）都是调用方把请求写错了，按手册的 400 返回。
+     * 没有这条时它们会掉进兜底的 {@link #handleOther}，被当成 500 + ERROR 堆栈，
+     * 调用方的「5xx 重试」还会把同一个坏请求反复打回来。
+     */
+    @ExceptionHandler({TypeMismatchException.class, HttpMessageNotReadableException.class,
+            ServletRequestBindingException.class})
+    public ResponseEntity<Map<String, Object>> handleBadInput(Exception e, HttpServletRequest req) {
+        log.debug("bad request on {} {}: {}", req.getMethod(), req.getRequestURI(), e.toString());
+        return build(HttpStatus.BAD_REQUEST, "bad_request", e.getMessage(), req);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleBadMethod(HttpRequestMethodNotSupportedException e,
+                                                               HttpServletRequest req) {
+        ResponseEntity<Map<String, Object>> rsp =
+                build(HttpStatus.METHOD_NOT_ALLOWED, "method_not_allowed", e.getMessage(), req);
+        if (e.getSupportedHttpMethods() == null || e.getSupportedHttpMethods().isEmpty()) {
+            return rsp;
+        }
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .header(HttpHeaders.ALLOW, e.getSupportedHttpMethods().stream()
+                        .map(Object::toString).collect(Collectors.joining(", ")))
+                .body(rsp.getBody());
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleBadContentType(HttpMediaTypeNotSupportedException e,
+                                                                    HttpServletRequest req) {
+        return build(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", e.getMessage(), req);
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<Map<String, Object>> handleNotAcceptable(HttpMediaTypeNotAcceptableException e,
+                                                                   HttpServletRequest req) {
+        return build(HttpStatus.NOT_ACCEPTABLE, "not_acceptable", e.getMessage(), req);
     }
 
     /** 异步接口（CompletableFuture）里抛出的业务异常可能包一层 CompletionException，剥掉再走既有映射。 */

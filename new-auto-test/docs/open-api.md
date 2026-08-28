@@ -27,12 +27,16 @@
 
 | 状态码 | 含义 |
 |---|---|
-| 400 | 参数错误（command 为空、目标机器不存在、requestId 格式错等） |
-| 404 | taskId / executeId / fileId 不存在 |
+| 400 | 参数错误（command 为空、目标机器不存在、requestId 格式错、路径/查询参数类型不符、JSON 体读不出来等） |
+| 404 | taskId / executeId / fileId 不存在；路径本身不存在时是 `{"code":"not_found","message":"no such path"}` |
+| 405 | 该路径不支持这个 HTTP 方法（响应带 `Allow` 头） |
 | 409 | requestId 重复；或对仍在执行中的任务重跑 |
+| 415 | Content-Type 不对（JSON 接口要 `application/json`，上传接口要 `multipart/form-data`） |
 | 413 | 附件超过单文件 32MB 上限 |
 | 429 | 附件上传并发已满，稍后重试 |
 | 503 | Server 附件写盘失败（磁盘/IO 故障） |
+
+4xx 一律是「这个请求本身有问题」，原样重试不会变好；只有 429 和 5xx 值得退避重试。
 
 ## 2. requestId：调用方幂等键
 
