@@ -72,7 +72,7 @@ const filtered = computed<LogLine[]>(() => {
 const hiddenByFilter = computed(() => props.lines.length - filtered.value.length)
 
 const gutterWidth = computed(() => {
-  const max = props.lines.length ? props.lines[props.lines.length - 1].seq + 1 : 1
+  const max = props.lines.length ? props.lines[props.lines.length - 1].seq : 1
   return Math.max(44, String(max).length * 8 + 22)
 })
 
@@ -426,7 +426,7 @@ defineExpose({ jumpBottom, scrollToBottom })
             class="term__line"
             :class="{ 'is-err': line.stream === 'stderr' || line.stream === '2' }"
           >
-            <span class="term__gutter" :style="{ width: `${gutterWidth}px` }">{{ line.seq + 1 }}</span>
+            <span class="term__gutter" :style="{ width: `${gutterWidth}px` }">{{ line.seq }}</span>
             <span v-if="showTime" class="term__ts" :style="{ left: `${gutterWidth}px` }">
               {{ formatClock(line.ts) }}
             </span>
