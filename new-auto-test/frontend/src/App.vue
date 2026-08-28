@@ -81,9 +81,15 @@ const navItems = [
   { key: 'timeline', to: '/timeline', label: '时间线', icon: 'Histogram' },
   { key: 'playground', to: '/playground', label: '测试下发', icon: 'MagicStick' },
   { key: 'open', to: '/open', label: '开放查询', icon: 'Link' },
+  { key: 'open-debug', to: '/open/debug', label: '接入调试', icon: 'Position' },
 ]
 
-const activeNav = computed(() => (route.meta.nav as string | undefined) ?? '')
+/** 开放组两个页面共用 meta.nav='open'（供纸面主题判断），侧栏高亮按路径细分 */
+const activeNav = computed(() => {
+  const nav = (route.meta.nav as string | undefined) ?? ''
+  if (nav === 'open') return route.path.startsWith('/open/debug') ? 'open-debug' : 'open'
+  return nav
+})
 
 const onlineCount = computed(
   () => agents.value.filter((a) => a.status === 'online' || a.status === 'busy').length,

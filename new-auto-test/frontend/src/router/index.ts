@@ -47,6 +47,13 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '开放查询', nav: 'open' },
   },
   {
+    // nav 归入 open 组：App.vue 据此给整棵子树套浅色纸面主题（html.nat-open / .theme-open）
+    path: '/open/debug',
+    name: 'open-debug',
+    component: () => import('@/views/OpenDebugView.vue'),
+    meta: { title: '接入调试', nav: 'open' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),

@@ -27,8 +27,10 @@ npm run build   # 类型检查 + 产物输出到 dist/
 | `#/executions/:executeId` | 执行详情 | 元数据、结果徽章、实时日志终端、5MB 截断横幅 |
 | `#/timeline` | 时间线 | 按 executeId / agentId 查询，agent 左、server 右，展示 token / session / bootId |
 | `#/playground` | 测试下发 | 选机器 + 填命令 + 可选 condition，一键下发，右侧立刻跟状态和日志 |
+| `#/open` | 开放查询 | 接入方拿 requestId 查整批任务进度与回调投递，纸面浅色主题，可 `embed=1` 嵌入宿主 |
+| `#/open/debug` | 接入调试 | 面向接入方的 Open API 请求台：五个开放接口的表单 → JSON → 真实请求，原样展示状态码/响应体（含 400/409 与 `errors[]`），可复制等价 curl，创建成功后直达开放查询 |
 
-侧栏五个入口都是真实页面，没有占位首页；`/` 重定向到总览，未知路由有 404 页。
+侧栏入口都是真实页面，没有占位首页；`/` 重定向到总览，未知路由有 404 页。
 
 ## 实现要点
 

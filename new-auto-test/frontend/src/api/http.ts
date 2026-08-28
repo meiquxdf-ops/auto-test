@@ -130,6 +130,38 @@ export function unwrapList<T = unknown>(body: unknown): T[] {
   return []
 }
 
+export interface RawHttpResult {
+  status: number
+  statusText: string
+  data: unknown
+  durationMs: number
+}
+
+/**
+ * 接入调试页专用：原样透出 HTTP 状态码与响应体，不做 unwrap、不弹全局 toast。
+ * 4xx/5xx 也走 resolve（调试页要把错误响应原样展示给调用方），
+ * 只有网络层失败（连不上 Server）才会 reject（被上面的拦截器包成 status 0 的 ApiError）。
+ */
+export async function rawRequest(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+): Promise<RawHttpResult> {
+  const started = Date.now()
+  const res = await http.request({
+    method,
+    url: path,
+    data: body,
+    validateStatus: () => true,
+  })
+  return {
+    status: res.status,
+    statusText: res.statusText,
+    data: res.data,
+    durationMs: Date.now() - started,
+  }
+}
+
 export async function get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const res = await http.get(url, config)
   return unwrap<T>(res.data)

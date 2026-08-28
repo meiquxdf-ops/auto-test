@@ -10,8 +10,10 @@ const props = withDefaults(
     /** 只允许选一台 */
     single?: boolean
     placeholder?: string
+    /** 允许输入机器列表之外的 tag（接入调试页：没有在线机器也能填目标） */
+    allowCreate?: boolean
   }>(),
-  { single: false, placeholder: '搜索 tag / agentId' },
+  { single: false, placeholder: '搜索 tag / agentId', allowCreate: false },
 )
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string[]): void }>()
@@ -94,6 +96,9 @@ const statusOptions: { value: AgentStatus | 'all'; label: string }[] = [
         collapse-tags
         collapse-tags-tooltip
         :max-collapse-tags="1"
+        :allow-create="allowCreate"
+        :default-first-option="allowCreate"
+        :reserve-keyword="!allowCreate"
         :placeholder="placeholder"
         :loading="loading"
         class="picker__select"
