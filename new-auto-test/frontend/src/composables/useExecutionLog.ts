@@ -50,6 +50,11 @@ export function useExecutionLog(executeId: Ref<string>) {
     flushHandle = window.requestAnimationFrame(flush)
   }
 
+  /** Server 的 seq 从 1 起编，负载没带 seq 时按同一起点顺延，别把首行编成 0 */
+  function nextIndex() {
+    return Math.max(seenMax + 1, 1)
+  }
+
   function pushLines(items: LogLine[]) {
     for (const line of items) {
       if (line.seq <= seenMax) continue
@@ -122,19 +127,19 @@ export function useExecutionLog(executeId: Ref<string>) {
   function handlePayload(payload: unknown) {
     if (payload === null || payload === undefined || payload === '') return
     if (typeof payload === 'string') {
-      pushLines([{ seq: seenMax + 1, text: payload }])
+      pushLines([{ seq: nextIndex(), text: payload }])
       return
     }
     if (Array.isArray(payload)) {
-      pushLines(payload.map((item, i) => normalizeLogLine(item, seenMax + 1 + i)))
+      pushLines(payload.map((item, i) => normalizeLogLine(item, nextIndex() + i)))
       return
     }
     const o = asDict(payload)
     if (Array.isArray(o.lines)) {
-      const from = optNum(o, ['from', 'fromSeq', 'seq']) ?? seenMax + 1
+      const from = optNum(o, ['from', 'fromSeq', 'seq']) ?? nextIndex()
       pushLines((o.lines as unknown[]).map((item, i) => normalizeLogLine(item, from + i)))
     } else if (o.text !== undefined || o.line !== undefined || o.content !== undefined) {
-      pushLines([normalizeLogLine(o, seenMax + 1)])
+      pushLines([normalizeLogLine(o, nextIndex())])
     }
     if (bool(o, ['truncated', 'logTruncated'], false)) truncated.value = true
     const dropped = optNum(o, ['droppedBytes', 'dropped'])
