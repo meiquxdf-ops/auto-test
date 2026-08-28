@@ -42,6 +42,12 @@ public class AtestProperties {
     @Getter
     @Setter
     public static class SshInstall {
+        /**
+         * 总开关，默认关闭：该接口拿 root 凭据登目标机执行脚本，第一期开放 API 又没有鉴权，
+         * 默认打开等于把内网 root 执行面暴露给任何能访问 :8080 的调用方。
+         * 需要用页面「SSH 代装」时显式设 atest.ssh-install.enabled=true 再重启 Server。
+         */
+        private boolean enabled = false;
         private long connectTimeoutMs = 10_000;
         private long authTimeoutMs = 10_000;
         /** install.sh 自己最多等 20s 注册，再叠加上传/systemd 时间，给足余量 */
