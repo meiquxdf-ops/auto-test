@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { getDashboardStats, type DashboardStats } from '@/api/dashboard'
 import { errorMessage } from '@/api/http'
 import { listTasks } from '@/api/tasks'
 import { getTimeline } from '@/api/timeline'
@@ -18,6 +19,7 @@ const { agents, loading: agentsLoading, error: agentsError, refresh: refreshAgen
 
 const tasks = ref<Task[]>([])
 const events = ref<TimelineEvent[]>([])
+const stats = ref<DashboardStats | null>(null)
 const tasksLoading = ref(false)
 const eventsLoading = ref(false)
 const tasksError = ref('')
@@ -25,6 +27,15 @@ const eventsError = ref('')
 const lastLoadedAt = ref<number | null>(null)
 
 let timer: number | null = null
+
+/** Server 端全量聚合；拿不到就退回列表窗口累加（老 Server 没有这个接口） */
+async function loadStats() {
+  try {
+    stats.value = await getDashboardStats()
+  } catch {
+    stats.value = null
+  }
+}
 
 async function loadTasks() {
   tasksLoading.value = true
@@ -51,7 +62,7 @@ async function loadEvents() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshAgents(), loadTasks(), loadEvents()])
+  await Promise.all([refreshAgents(), loadStats(), loadTasks(), loadEvents()])
   lastLoadedAt.value = Date.now()
 }
 
@@ -112,7 +123,11 @@ const capacity = computed(() => {
   return { slots, used, pct: slots ? Math.round((used / slots) * 100) : 0 }
 })
 
-const counts = computed(() => countExecutions(tasks.value))
+/**
+ * 卡片与「执行结果」是全局口径：/api/tasks 的 size 被 Server 截到 200，
+ * 只累加这一页会把更早的失败 / 阻塞 / 排队全部漏掉。下面的表格仍取最近这页。
+ */
+const counts = computed(() => stats.value?.executions ?? countExecutions(tasks.value))
 const runningCount = computed(() => sumCounts(counts.value, ['running', 'dispatching']))
 const badCount = computed(() => sumCounts(counts.value, ['fail', 'block', 'exception']))
 const pendingCount = computed(() => counts.value.pending)
