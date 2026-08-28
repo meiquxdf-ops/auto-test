@@ -291,13 +291,17 @@ public class AgentSessionService {
         String agentId = conn.getAgentId();
         Instant now = Instant.now();
 
-        List<String> reported = new ArrayList<>();
+        Map<String, String> reported = new LinkedHashMap<>();
         JsonNode running = Json.first(a, "running", "runs", "executions");
         if (running != null && running.isArray()) {
             for (JsonNode n : running) {
-                String executeId = n.isTextual() ? n.asText() : Json.text(n, "executeId", "execId", "eid");
-                if (executeId != null) {
-                    reported.add(executeId);
+                if (n.isTextual()) {
+                    reported.put(n.asText(), null);
+                } else {
+                    String executeId = Json.text(n, "executeId", "execId", "eid");
+                    if (executeId != null) {
+                        reported.put(executeId, Json.text(n, "token", "dispatchToken"));
+                    }
                 }
             }
         }
@@ -312,13 +316,28 @@ public class AgentSessionService {
         }
 
         Set<String> pendingCancels = new LinkedHashSet<>();
-        for (String executeId : reported) {
+        for (Map.Entry<String, String> entry : reported.entrySet()) {
+            String executeId = entry.getKey();
+            String token = entry.getValue();
             TaskExecutionEntity exec = executionRepository.findByExecuteId(executeId).orElse(null);
             if (exec == null) {
                 pendingCancels.add(executeId);
                 continue;
             }
             if (exec.getStatus().isTerminal()) {
+                pendingCancels.add(executeId);
+                continue;
+            }
+            // another machine's execution must never be kept alive through this connection
+            if (!agentId.equals(exec.getAgentId())) {
+                log.warn("agent {} heartbeat reported execution {} owned by {}",
+                        agentId, executeId, exec.getAgentId());
+                pendingCancels.add(executeId);
+                continue;
+            }
+            // when the item carries a token it must be the one minted at dispatch; a stale
+            // process left over from a redispatch must not renew the new lease
+            if (token != null && !token.isBlank() && !ExecutionService.tokenMatches(exec, token)) {
                 pendingCancels.add(executeId);
                 continue;
             }
@@ -360,8 +379,15 @@ public class AgentSessionService {
             conn.replyError(env.id, ErrorCodes.UNKNOWN_EXECUTION, "unknown executeId " + executeId);
             return;
         }
+        if (!conn.getAgentId().equals(exec.getAgentId())) {
+            log.warn("agent {} tried to log into execution {} owned by {}",
+                    conn.getAgentId(), executeId, exec.getAgentId());
+            conn.replyError(env.id, ErrorCodes.FORBIDDEN,
+                    "execution " + executeId + " belongs to another agent");
+            return;
+        }
         if (!ExecutionService.tokenMatches(exec, token)) {
-            conn.replyError(env.id, ErrorCodes.BAD_TOKEN, "stale token for " + executeId);
+            conn.replyError(env.id, ErrorCodes.BAD_TOKEN, "missing or stale token for " + executeId);
             return;
         }
         if (exec.getStatus().isTerminal()) {
@@ -385,10 +411,19 @@ public class AgentSessionService {
             for (JsonNode node : events) {
                 String type = Json.text(node, "type", "t", "kind");
                 String executeId = Json.text(node, "executeId", "execId", "eid");
-                if (executeId != null && type != null
-                        && (type.contains("start") || type.contains("running"))) {
-                    executionService.markRunning(executeId, "evt:" + type);
+                if (executeId == null || type == null
+                        || !(type.contains("start") || type.contains("running"))) {
+                    continue;
                 }
+                TaskExecutionEntity exec = executionRepository.findByExecuteId(executeId).orElse(null);
+                if (exec == null || !conn.getAgentId().equals(exec.getAgentId())) {
+                    continue;
+                }
+                String token = Json.text(node, "token", "dispatchToken");
+                if (token != null && !token.isBlank() && !ExecutionService.tokenMatches(exec, token)) {
+                    continue;
+                }
+                executionService.markRunning(exec, "evt:" + type);
             }
         }
         conn.reply(env.id, Map.of("acked", acked, "count", acked.size()));
@@ -409,6 +444,13 @@ public class AgentSessionService {
         if (exec == null) {
             // ACK anyway so the agent stops resending a fin nobody can use
             conn.reply(env.id, Map.of("applied", false, "unknown", true));
+            return;
+        }
+        if (!conn.getAgentId().equals(exec.getAgentId())) {
+            log.warn("agent {} tried to fin execution {} owned by {}",
+                    conn.getAgentId(), executeId, exec.getAgentId());
+            conn.replyError(env.id, ErrorCodes.FORBIDDEN,
+                    "execution " + executeId + " belongs to another agent");
             return;
         }
         if (!ExecutionService.tokenMatches(exec, token)) {

@@ -61,6 +61,9 @@ public class ReconcileService {
         this.eventService = eventService;
     }
 
+    /** Set when the bean is created, i.e. before the scheduler can claim any callback. */
+    private final Instant bootTime = Instant.now();
+
     /** Nothing can be connected right after a boot, so old sessions must not look alive. */
     @EventListener(ApplicationReadyEvent.class)
     @Transactional
@@ -79,6 +82,11 @@ public class ReconcileService {
             } else {
                 executionService.markDisconnected(exec);
             }
+        }
+        // a callback stuck in RUNNING from the previous process would otherwise never retry
+        int requeued = taskRepository.requeueStuckCallbacks(bootTime, now);
+        if (requeued > 0) {
+            log.info("boot recovery: requeued {} callback(s) left RUNNING by a previous process", requeued);
         }
     }
 

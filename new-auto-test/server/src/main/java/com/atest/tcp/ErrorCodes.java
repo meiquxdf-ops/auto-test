@@ -10,6 +10,7 @@ public final class ErrorCodes {
     public static final String BAD_REQUEST = "bad_request";
     public static final String UNKNOWN_EXECUTION = "unknown_execution";
     public static final String BAD_TOKEN = "bad_token";
+    public static final String FORBIDDEN = "forbidden";
     public static final String TAG_CONFLICT = "tag_conflict";
     public static final String INTERNAL = "internal";
     public static final String OFFLINE = "offline";

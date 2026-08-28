@@ -22,6 +22,7 @@ import com.atest.domain.CallbackStatus;
 import com.atest.domain.ExecutionStatus;
 import com.atest.domain.TaskEntity;
 import com.atest.domain.TaskExecutionEntity;
+import com.atest.domain.TaskStatus;
 import com.atest.repo.AgentRepository;
 import com.atest.repo.OpenRequestRepository;
 import com.atest.repo.TaskExecutionRepository;
@@ -39,6 +40,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -365,6 +367,51 @@ class OpenApiCallbackTest {
         TaskExecutionEntity execReloaded = executionRepository.findById(exec.getId()).orElseThrow();
         assertThat(execReloaded.getStatus()).isEqualTo(ExecutionStatus.PASS);
         assertThat(execReloaded.getAttempt()).isEqualTo(1);
+    }
+
+    /**
+     * Crash recovery: a callback claimed (RUNNING) by a process that died can never finish on
+     * its own — the retry chain lives only in that process's memory and the backlog sweep
+     * selects PENDING rows only. The boot requeue must flip exactly the rows claimed before
+     * boot back to PENDING, and never a row claimed after boot (that would double-send it).
+     */
+    @Test
+    void bootRequeueResetsCallbacksStuckInRunning() {
+        TaskView stuck = taskService.create(request("req.cb-stuck", callbackUrl("/ok"),
+                "echo stuck", "open-agent-a"));
+        TaskView fresh = taskService.create(request("req.cb-fresh", callbackUrl("/ok"),
+                "echo fresh", "open-agent-a"));
+        Instant bootTime = Instant.now();
+
+        // the previous process claimed the callback (pending -> running) and died before sending
+        TaskEntity stuckTask = taskRepository.findById(stuck.id()).orElseThrow();
+        stuckTask.setStatus(TaskStatus.FINISHED);
+        stuckTask.setCallbackStatus(CallbackStatus.RUNNING);
+        stuckTask.setUpdatedAt(bootTime.minusSeconds(60));
+        taskRepository.save(stuckTask);
+
+        // claimed after this boot by the live process: must stay running
+        TaskEntity freshTask = taskRepository.findById(fresh.id()).orElseThrow();
+        freshTask.setStatus(TaskStatus.FINISHED);
+        freshTask.setCallbackStatus(CallbackStatus.RUNNING);
+        freshTask.setUpdatedAt(bootTime.plusSeconds(60));
+        taskRepository.save(freshTask);
+
+        assertThat(taskRepository.requeueStuckCallbacks(bootTime, Instant.now()))
+                .isGreaterThanOrEqualTo(1);
+        assertThat(taskRepository.findById(stuck.id()).orElseThrow().getCallbackStatus())
+                .isEqualTo(CallbackStatus.PENDING);
+        assertThat(taskRepository.findById(fresh.id()).orElseThrow().getCallbackStatus())
+                .isEqualTo(CallbackStatus.RUNNING);
+        // the requeued row is what the periodic backlog sweep looks for
+        assertThat(taskRepository.findCallbackBacklog(PageRequest.of(0, 50))).contains(stuck.id());
+
+        // keep the sweep from actually delivering these into later tests of this class
+        for (Long id : List.of(stuck.id(), fresh.id())) {
+            TaskEntity t = taskRepository.findById(id).orElseThrow();
+            t.setCallbackStatus(CallbackStatus.SUCCESS);
+            taskRepository.save(t);
+        }
     }
 
     @Test

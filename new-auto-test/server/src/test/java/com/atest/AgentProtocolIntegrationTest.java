@@ -99,6 +99,80 @@ class AgentProtocolIntegrationTest {
         }
     }
 
+    /**
+     * Result attribution: an executeId alone must never be enough to write into a run. A second
+     * agent that learned the executeId (but not the dispatch token, and not the owning agentId)
+     * must not be able to append logs, renew the lease or fin another machine's execution — and
+     * even the owning agent must present the exact token minted at dispatch.
+     */
+    @Test
+    void foreignAgentCannotLogOrFinAnotherAgentsExecution() throws Exception {
+        try (TestAgent owner = new TestAgent(tcpServer.boundPort());
+             TestAgent rogue = new TestAgent(tcpServer.boundPort())) {
+            assertThat(owner.hello("agent-owner", List.of()).isOk()).isTrue();
+            assertThat(rogue.hello("agent-rogue", List.of()).isOk()).isTrue();
+
+            createTask("agent-owner", "sleep 100", null);
+            dispatchService.dispatchOnce();
+
+            Envelope exec = owner.readUntil("exec");
+            String executeId = exec.args().get("executeId").asText();
+            String token = exec.args().get("token").asText();
+            owner.reply(exec.id, Map.of("accepted", true));
+
+            // owner without the token is rejected too: blank tokens must not pass
+            Envelope blankToken = owner.request("log", Map.of(
+                    "executeId", executeId, "fromSeq", 1, "lines", List.of("no token")));
+            assertThat(blankToken.isOk()).isFalse();
+            assertThat(blankToken.errorCode()).isEqualTo(ErrorCodes.BAD_TOKEN);
+
+            Envelope ownerLog = owner.request("log", Map.of(
+                    "executeId", executeId, "token", token, "fromSeq", 1, "lines", List.of("mine")));
+            assertThat(ownerLog.isOk()).isTrue();
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                    assertThat(statusOf(executeId)).isEqualTo(ExecutionStatus.RUNNING));
+
+            // rogue log without a token: rejected by ownership, nothing appended
+            Envelope rogueLog = rogue.request("log", Map.of(
+                    "executeId", executeId, "fromSeq", 2, "lines", List.of("injected")));
+            assertThat(rogueLog.isOk()).isFalse();
+            assertThat(rogueLog.errorCode()).isEqualTo(ErrorCodes.FORBIDDEN);
+
+            // even a leaked token must not help a connection with a different agentId
+            Envelope rogueLogWithToken = rogue.request("log", Map.of(
+                    "executeId", executeId, "token", token, "fromSeq", 2, "lines", List.of("injected")));
+            assertThat(rogueLogWithToken.isOk()).isFalse();
+            assertThat(rogueLogWithToken.errorCode()).isEqualTo(ErrorCodes.FORBIDDEN);
+
+            // rogue fin must not terminate the run
+            Envelope rogueFin = rogue.request("fin", Map.of(
+                    "executeId", executeId, "exitCode", 0, "lastLine", "0", "reason", "finished"));
+            assertThat(rogueFin.isOk()).isFalse();
+            assertThat(rogueFin.errorCode()).isEqualTo(ErrorCodes.FORBIDDEN);
+            assertThat(statusOf(executeId)).isEqualTo(ExecutionStatus.RUNNING);
+
+            // rogue heartbeat must not renew the owner's lease; the reply tells it to kill
+            // the process it wrongly claims to run
+            Envelope rogueHb = rogue.request("hb", Map.of("running", List.of(
+                    Map.of("executeId", executeId))));
+            assertThat(rogueHb.isOk()).isTrue();
+            assertThat(rogueHb.result().get("cancel"))
+                    .anyMatch(n -> executeId.equals(n.asText()));
+
+            TaskExecutionEntity run = executionRepository.findByExecuteId(executeId).orElseThrow();
+            assertThat(logService.page(run, 0, 100).lines())
+                    .as("only the owner's line may be stored")
+                    .hasSize(1);
+
+            // the owner with the minted token finishes normally
+            Envelope ownerFin = owner.request("fin", Map.of(
+                    "executeId", executeId, "token", token, "exitCode", 0,
+                    "lastLine", "0", "reason", "finished"));
+            assertThat(ownerFin.result().get("applied").asBoolean()).isTrue();
+            assertThat(statusOf(executeId)).isEqualTo(ExecutionStatus.PASS);
+        }
+    }
+
     @Test
     void secondSessionIsRejectedWhileTheFirstAnswersPing() throws Exception {
         try (TestAgent first = new TestAgent(tcpServer.boundPort())) {

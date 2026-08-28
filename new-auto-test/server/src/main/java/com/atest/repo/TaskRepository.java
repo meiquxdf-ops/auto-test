@@ -67,4 +67,19 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
             + "and t.status in (com.atest.domain.TaskStatus.FINISHED, com.atest.domain.TaskStatus.CANCELED) "
             + "order by t.id asc")
     List<Long> findCallbackBacklog(Pageable pageable);
+
+    /**
+     * Boot recovery: a callback claimed (RUNNING) by a previous server process can never finish,
+     * because the retry chain lived only in that process's memory and the backlog sweep selects
+     * PENDING rows only. Requeue it so the sweep re-fires the delivery. Guarded on
+     * {@code updatedAt < bootTime} so a callback legitimately claimed after this boot is never
+     * reset (that would double-send it).
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("update TaskEntity t set t.callbackStatus = com.atest.domain.CallbackStatus.PENDING, t.updatedAt = :now "
+            + "where t.callbackUrl is not null "
+            + "and t.callbackStatus = com.atest.domain.CallbackStatus.RUNNING "
+            + "and t.updatedAt < :bootTime")
+    int requeueStuckCallbacks(@Param("bootTime") Instant bootTime, @Param("now") Instant now);
 }

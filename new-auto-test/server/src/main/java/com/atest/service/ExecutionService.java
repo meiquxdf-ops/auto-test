@@ -318,7 +318,12 @@ public class ExecutionService {
         agentRepository.findById(agentId).ifPresent(agentSse::publishAgent);
     }
 
+    /**
+     * A frame may act on an execution only when it presents the exact token minted at dispatch.
+     * Blank tokens are rejected: knowing an executeId alone must never be enough to append logs
+     * or fin a run, otherwise any connected agent could write into another machine's execution.
+     */
     public static boolean tokenMatches(TaskExecutionEntity exec, String token) {
-        return token == null || token.isBlank() || token.equals(exec.getDispatchToken());
+        return token != null && !token.isBlank() && token.equals(exec.getDispatchToken());
     }
 }
