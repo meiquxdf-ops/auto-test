@@ -233,11 +233,19 @@ sudo sed -e "s#@USER@#atserver#g" \
 sudo systemctl daemon-reload && sudo systemctl enable --now atserver
 ```
 
-JVM 参数、数据库地址之类放 `/etc/atserver/server.env`（unit 里 `EnvironmentFile=-`，文件不存在也不报错）：
+JVM 参数、数据库地址之类放 `/etc/atserver/server.env`（unit 里 `EnvironmentFile=-`，文件不存在也不报错）。
+`mysql` profile 的连接信息全部从环境变量读，**凭据不写进 yaml / 不进 git**：
 
 ```
 JAVA_OPTS=-Xms1g -Xmx4g -XX:+UseG1GC
-SPRING_PROFILES_ACTIVE=prod
+SPRING_PROFILES_ACTIVE=mysql
+MYSQL_HOST=10.0.0.6        # 默认 127.0.0.1
+MYSQL_PORT=3306            # 默认 3306
+MYSQL_DATABASE=atest       # 默认 atest
+MYSQL_USER=atest           # 默认 root
+MYSQL_PASSWORD=<必填>      # 无默认，生产必须显式提供
 ```
+
+该文件含密码，注意收紧权限：`chmod 600 /etc/atserver/server.env`、owner 给运行用户。
 
 Spring 的额外配置从 `/etc/atserver/` 读（`--spring.config.additional-location`），放 `application.yml` 覆盖默认值即可。端口：HTTP `8080`、Agent TCP `9800`，两个都要对内网放通。
