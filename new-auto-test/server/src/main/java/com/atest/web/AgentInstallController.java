@@ -55,6 +55,7 @@ public class AgentInstallController {
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("agentTcpPort", props.getAgent().getPort());
         res.put("distDir", props.getAgentDist().getDir());
+        res.put("sshInstallEnabled", props.getSshInstall().isEnabled());
         AgentDistService.BinaryInfo bin = dist.binaryInfo().orElse(null);
         res.put("binaryAvailable", bin != null);
         if (bin != null) {
@@ -104,6 +105,12 @@ public class AgentInstallController {
 
     @PostMapping("/ssh-install")
     public Map<String, Object> sshInstall(@RequestBody SshInstallRequest request) {
+        // kill switch（默认关）：接口收 root 凭据并在目标机执行脚本，必须显式开启才暴露
+        if (!props.getSshInstall().isEnabled()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "ssh_install_disabled",
+                    "SSH 代装已停用：需在 Server 配置 atest.ssh-install.enabled=true 并重启后才可用；"
+                            + "也可改用「复制命令」或 curl 一行安装（见机器列表的安装抽屉）");
+        }
         return sshInstallService.install(request);
     }
 }

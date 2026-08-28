@@ -65,6 +65,13 @@ cd deploy && make agent-dist     # 等价 cd agent && make static，产物写到
 
 ### SSH 代装
 
+> **默认关闭（kill switch）**：该接口收 root 口令/私钥并在目标机执行脚本，而第一期
+> HTTP 面没有鉴权，默认开启等于把内网 root 执行面暴露给任何能访问 :8080 的调用方。
+> 需要使用时在 Server 配置里设 `atest.ssh-install.enabled=true`（如
+> `/etc/atserver/application.yml`，或启动参数 `--atest.ssh-install.enabled=true`）并重启；
+> 关闭期间 `POST /api/agent/ssh-install` 返回 403（`ssh_install_disabled`），页面上的
+> 另两种方式（复制命令、curl 一行安装）不受影响。
+
 抽屉里的「SSH 代装」让 Server 直接 SSH 到目标机：SFTP 上传 `atagent` + `install.sh` +
 `atagent.service` 到 `/tmp/atagent-ssh-install.<random>/`，执行
 `sudo bash ./install.sh --server … --tag … --concurrency … --bin ./atagent`

@@ -75,7 +75,12 @@ atest:
     dir: ./dist/agent
   # 「SSH 代装」：Server SSH 到目标机上传 atagent + install.sh 并执行。
   # 口令 / 私钥只在单次请求内存中使用，不落库、不打日志。
+  # enabled 默认 false（kill switch）：该接口收 root 凭据并在目标机执行脚本，而第一期
+  # HTTP 面没有鉴权，默认开启等于把内网 root 执行面暴露给任何能访问 :8080 的调用方。
+  # 确要使用页面「SSH 代装」时改成 true 并重启 Server；关闭期间接口返回 403
+  # （code=ssh_install_disabled），复制命令 / curl 一行安装不受影响。
   ssh-install:
+    enabled: false
     connect-timeout-ms: 10000
     auth-timeout-ms: 10000
     exec-timeout-ms: 180000

@@ -30,7 +30,9 @@ import org.springframework.test.context.DynamicPropertySource;
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:atest-install;DB_CLOSE_DELAY=-1",
-        "atest.agent.port=0"
+        "atest.agent.port=0",
+        // SSH 代装默认关闭（kill switch），这里显式打开以测参数校验路径
+        "atest.ssh-install.enabled=true"
 })
 class AgentInstallHttpTest {
 
