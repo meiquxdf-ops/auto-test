@@ -51,7 +51,7 @@ systemctl status atagent && journalctl -u atagent -n 200 --no-pager
 | `9800` bind 失败 | 旧 Server 没退干净 | 同上，查 9800 |
 | `Database may be already in use`（H2 文件锁） | 上一个 Server 进程还握着 `server/data/atest` | 确认旧进程退出；开发环境实在不行删 `server/data/`（**数据全丢**，仅限开发） |
 | Flyway `Migration checksum mismatch` | 改了已应用的迁移脚本 | 开发环境删 `server/data/` 重来；不要改已发布的 `V*.sql`，新建版本号 |
-| MySQL 连接拒绝（`mysql` profile） | 地址/账号不对或库没建 | 核对 `--spring.profiles.active=mysql` 与数据源配置，先 `mysql -h.. -u..` 手工连通 |
+| MySQL 连接拒绝（`mysql` profile） | 地址/账号不对或库没建 | 核对 `--spring.profiles.active=mysql` 与 `MYSQL_HOST/PORT/DATABASE/USER/PASSWORD` 环境变量（见 deploy/README.md「装 Server」），先 `mysql -h.. -u..` 手工连通 |
 | `ClassNotFoundException` / lombok 报错 | 依赖没拉全 | `mvn -q clean package` 重新解析；检查内网 Maven 镜像 |
 
 确认版本：Server 需要 **Java 17+**（`java -version`）与 Maven 3.9+。
