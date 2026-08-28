@@ -17,6 +17,7 @@ import { countExecutions } from '@/utils/aggregate'
 import { copyText, durationBetween, formatFullTime, formatTime } from '@/utils/format'
 import { callbackStatusMeta, isTerminal, statusMeta } from '@/utils/status'
 import { useAgents } from '@/stores/agents'
+import AttachmentsDialog from '@/components/AttachmentsDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
 import CopyableId from '@/components/CopyableId.vue'
@@ -305,6 +306,14 @@ function gotoExecution(exec: Execution) {
   void router.push(`/executions/${exec.executeId}`)
 }
 
+/* ------------------------------------------------------------ 附件 */
+
+const attachmentsFor = ref<Task | null>(null)
+
+function openAttachments(task: Task) {
+  attachmentsFor.value = task
+}
+
 function gotoTimeline(task: Task) {
   void router.push({ path: '/timeline', query: { executeId: task.executions[0]?.executeId ?? '' } })
 }
@@ -322,6 +331,9 @@ function onRowCommand(command: string | number | object, task: Task) {
       break
     case 'template':
       useAsTemplate(task)
+      break
+    case 'attachments':
+      openAttachments(task)
       break
     case 'log':
       if (task.executions[0]) gotoExecution(task.executions[0])
@@ -565,6 +577,14 @@ function callbackTooltip(task: Task): string {
               <div class="row-meta">
                 <CopyableId :value="row.taskId" :head="8" />
                 <span v-if="row.operator" class="muted">· {{ row.operator }}</span>
+                <button
+                  v-if="row.attachmentCount"
+                  class="att-chip"
+                  :title="`${row.attachmentCount} 个附件，点击查看`"
+                  @click.stop="openAttachments(row)"
+                >
+                  附件 {{ row.attachmentCount }}
+                </button>
               </div>
             </template>
           </el-table-column>
@@ -647,7 +667,10 @@ function callbackTooltip(task: Task): string {
                       原地重跑
                     </el-dropdown-item>
                     <el-dropdown-item command="rerun-new" :icon="'RefreshRight'">重跑为新记录</el-dropdown-item>
-                    <el-dropdown-item command="template" divided :icon="'CopyDocument'">以此为模板</el-dropdown-item>
+                    <el-dropdown-item command="attachments" divided :icon="'Folder'">
+                      附件{{ row.attachmentCount ? ` (${row.attachmentCount})` : '' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item command="template" :icon="'CopyDocument'">以此为模板</el-dropdown-item>
                     <el-dropdown-item
                       v-if="row.executions.length === 1"
                       command="log"
@@ -681,6 +704,14 @@ function callbackTooltip(task: Task): string {
 
     <TaskCreateDrawer v-model="createVisible" :preset="createPreset" @created="onCreated" />
     <QueueReorderDrawer v-model="reorderVisible" :tasks="pendingTasks" @saved="load()" />
+    <AttachmentsDialog
+      v-if="attachmentsFor"
+      :task-id="attachmentsFor.taskId"
+      :task-label="attachmentsFor.command"
+      allow-upload
+      @changed="load(true)"
+      @closed="attachmentsFor = null"
+    />
   </div>
 </template>
 
@@ -766,6 +797,26 @@ function callbackTooltip(task: Task): string {
   gap: 6px;
   margin-top: 2px;
   font-size: 11.5px;
+}
+
+/* 附件小筹码：中性描边，点开对话框看列表/下载 */
+.att-chip {
+  appearance: none;
+  padding: 0 7px;
+  border: 1px solid var(--nat-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--nat-text-sub);
+  font-size: 11px;
+  line-height: 17px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.att-chip:hover {
+  border-color: var(--nat-text-sub);
+  color: var(--nat-text);
 }
 
 .ord {

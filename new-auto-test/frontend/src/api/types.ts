@@ -129,7 +129,21 @@ export interface Task {
   callbackAttempts?: number
   callbackLastError?: string
   callbackLastAt?: number | null
+  /** 挂在该任务名下的附件数（脚本回传 + 运维台上传） */
+  attachmentCount: number
   raw: Record<string, unknown>
+}
+
+/** 任务附件元数据（文件内容在 Server 本地磁盘，走 /api/files/{id} 下载） */
+export interface TaskFile {
+  id: string
+  taskId?: string
+  /** 脚本按执行回传时带的 executeId；运维台直接传任务时为空 */
+  executeId?: string
+  name: string
+  size: number
+  contentType?: string
+  createdAt?: number | null
 }
 
 export interface LogLine {

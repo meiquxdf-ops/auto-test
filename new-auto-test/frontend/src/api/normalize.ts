@@ -345,6 +345,7 @@ export function normalizeTask(input: unknown): Task {
     callbackAttempts: optNum(o, ['callbackAttempts', 'callback_attempts']),
     callbackLastError: optStr(o, ['callbackLastError', 'callback_last_error']),
     callbackLastAt: timestamp(o, ['callbackLastAt', 'callback_last_at']),
+    attachmentCount: num(o, ['attachmentCount', 'attachment_count'], 0),
     raw: o,
   }
 }

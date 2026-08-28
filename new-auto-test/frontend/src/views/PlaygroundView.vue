@@ -320,7 +320,13 @@ const logFootNote = computed(() => {
 
             <el-form-item>
               <template #label>
-                <span class="lbl">命令 <span class="lbl__hint">bash -c 执行，支持多行</span></span>
+                <span class="lbl">
+                  命令
+                  <span class="lbl__hint">
+                    bash -c 执行，支持多行；产物回传：脚本内
+                    curl -F "file=@产物" "$ATEST_HTTP_BASE/api/executions/$ATEST_EXECUTE_ID/files"（≤32MB）
+                  </span>
+                </span>
               </template>
               <el-input
                 v-model="form.command"

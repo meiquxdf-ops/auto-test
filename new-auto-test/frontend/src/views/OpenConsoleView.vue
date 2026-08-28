@@ -14,6 +14,7 @@ import {
 import { isEmbed } from '@/utils/embed'
 import { copyText, durationBetween, formatFullTime, formatTime } from '@/utils/format'
 import { callbackStatusMeta, isTerminal, statusMeta } from '@/utils/status'
+import AttachmentsDialog from '@/components/AttachmentsDialog.vue'
 import CopyableId from '@/components/CopyableId.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusPill from '@/components/StatusPill.vue'
@@ -661,6 +662,10 @@ function openNodes(task: Task) {
   timelineDrawer.value = { executeId: ex.executeId, machine: ex.displayTag || ex.agentId || '' }
 }
 
+/* ------------------------------------------------------------ 附件（只读：查看 + 下载） */
+
+const attachmentsFor = ref<Task | null>(null)
+
 /* ------------------------------------------------------------ 分享 / 导出 */
 
 /** hash 路由：origin+pathname 后面拼 resolve 出来的 #/open?requestId=…（嵌入态带上 embed=1） */
@@ -1024,6 +1029,14 @@ async function copySnippet() {
                       回调{{ callbackStatusMeta(row.callbackStatus).label }}
                     </el-tag>
                   </el-tooltip>
+                  <button
+                    v-if="row.attachmentCount"
+                    class="att-chip"
+                    :title="`${row.attachmentCount} 个附件，点击查看 / 下载`"
+                    @click.stop="attachmentsFor = row"
+                  >
+                    附件 {{ row.attachmentCount }}
+                  </button>
                   <span v-if="row.operator" class="muted">{{ row.operator }}</span>
                 </div>
               </template>
@@ -1147,6 +1160,11 @@ async function copySnippet() {
             <code class="code-inline">GET /api/tasks?requestId=</code>
             查这批任务与执行明细，也就是本页
           </li>
+          <li>
+            脚本回传附件（≤ 32MB）：
+            <code class="code-inline">curl -F "file=@产物" "$ATEST_HTTP_BASE/api/executions/$ATEST_EXECUTE_ID/files"</code>
+            ，本页任务行可查看与下载
+          </li>
           <li>任务到终态后向 callbackUrl POST 一次结果；2xx 算送达，否则按 1s 起退避重试 5 次</li>
           <li>
             requestId 全局唯一（<code class="code-inline">^[A-Za-z0-9._-]{1,64}$</code>），重复创建返回 409
@@ -1171,6 +1189,12 @@ async function copySnippet() {
       :execute-id="timelineDrawer.executeId"
       :machine="timelineDrawer.machine"
       @closed="timelineDrawer = null"
+    />
+    <AttachmentsDialog
+      v-if="attachmentsFor"
+      :task-id="attachmentsFor.taskId"
+      :task-label="attachmentsFor.command"
+      @closed="attachmentsFor = null"
     />
   </div>
 </template>
@@ -1555,6 +1579,26 @@ async function copySnippet() {
   margin-top: 2px;
   font-size: 11.5px;
   flex-wrap: wrap;
+}
+
+/* 附件小筹码：跟本页墨色调一致的中性描边 */
+.att-chip {
+  appearance: none;
+  padding: 0 7px;
+  border: 1px solid rgba(20, 18, 16, 0.14);
+  border-radius: 999px;
+  background: rgba(20, 18, 16, 0.03);
+  color: var(--nat-text-sub);
+  font-size: 11px;
+  line-height: 17px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.att-chip:hover {
+  border-color: #1c1917;
+  color: #1c1917;
 }
 
 .time-stack {

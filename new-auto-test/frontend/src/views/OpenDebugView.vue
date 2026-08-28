@@ -392,6 +392,9 @@ const createTargetsHint = computed(() =>
           <p class="page-head__desc">
             面向接入方的 Open API 请求台：拼 requestId / callbackUrl 等参数，向 Server
             发送真实 HTTP 请求，查看原始状态码与响应体，并复制等价 curl 带回自己的系统。
+            产物回传：脚本内
+            <code class="code-inline">curl -F "file=@产物" "$ATEST_HTTP_BASE/api/executions/$ATEST_EXECUTE_ID/files"</code>
+            （单文件 ≤ 32MB）。
           </p>
         </div>
       </div>
