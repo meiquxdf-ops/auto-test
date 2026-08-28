@@ -50,6 +50,7 @@ public class CallbackService {
     private final EventService eventService;
     private final ExecutorService workExecutor;
     private final TaskScheduler retryScheduler;
+    private final CallbackUrlPolicy urlPolicy;
     private final HttpClient httpClient;
 
     public CallbackService(AtestProperties props,
@@ -57,16 +58,20 @@ public class CallbackService {
                            TaskExecutionRepository executionRepository,
                            EventService eventService,
                            @Qualifier("agentWorkExecutor") ExecutorService workExecutor,
-                           @Qualifier("taskScheduler") TaskScheduler retryScheduler) {
+                           @Qualifier("taskScheduler") TaskScheduler retryScheduler,
+                           CallbackUrlPolicy urlPolicy) {
         this.props = props;
         this.taskRepository = taskRepository;
         this.executionRepository = executionRepository;
         this.eventService = eventService;
         this.workExecutor = workExecutor;
         this.retryScheduler = retryScheduler;
+        this.urlPolicy = urlPolicy;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(props.getCallback().getTimeoutMs()))
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                // SSRF: never follow redirects — a 3xx hop would bypass the URL validation and
+                // could point back into the internal network. A redirect counts as a failure.
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .executor(workExecutor)
                 .build();
     }
@@ -134,6 +139,13 @@ public class CallbackService {
         CallbackStatus current = taskRepository.findById(taskId)
                 .map(TaskEntity::getCallbackStatus).orElse(null);
         if (current != CallbackStatus.RUNNING) {
+            return;
+        }
+        // re-validate right before every send: ingest-time validation alone can be defeated by a
+        // DNS record that flips to an internal IP afterwards (rebinding), or by a config change
+        String reject = urlPolicy.rejectReason(url);
+        if (reject != null) {
+            markFailed(taskId, attemptNo, "回调地址被安全策略拒绝: " + trimError(reject));
             return;
         }
         HttpRequest request;

@@ -106,6 +106,16 @@ atest:
   # 2xx 算成功；失败按 1s/2s/4s/8s/16s 退避重试 5 次（连首发共 max-attempts 次）后置 failed。
   # 注意这只重试 HTTP 通知本身，绝不会重跑 shell 命令。
   callback:
+    # SSRF 防护白名单：条目可以是主机名、IP 或 CIDR（如 cb.chaos.internal、10.9.0.0/16）。
+    # - 留空（默认）：允许一般公网 http(s) 回调，但一律拒绝 loopback、RFC1918 内网、
+    #   link-local（含 169.254.169.254 云元数据）、CGNAT、IPv6 ULA 等受保护地址；
+    # - 非空：只允许名单内的主机 —— 内网回调接收方（如 Chaos）必须显式列进来。
+    # 校验在创建任务（400）和每次投递前都会执行；回调不跟随 3xx 重定向（重定向按失败处理）。
+    # 示例：
+    # allowed-hosts:
+    #   - cb.chaos.internal
+    #   - 10.9.0.0/16
+    allowed-hosts: []
     max-attempts: 6
     backoff-base-ms: 1000
     timeout-ms: 10000

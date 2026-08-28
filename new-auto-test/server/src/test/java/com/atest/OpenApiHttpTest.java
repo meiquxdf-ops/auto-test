@@ -21,7 +21,9 @@ import org.springframework.http.ResponseEntity;
 /** The open-API wire surface: JSON bodies, HTTP status codes and the requestId query. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.datasource.url=jdbc:h2:mem:atest-openapi-http;DB_CLOSE_DELAY=-1",
-        "atest.agent.port=0"
+        "atest.agent.port=0",
+        // test payloads use loopback callback URLs, which the SSRF policy blocks by default
+        "atest.callback.allowed-hosts=127.0.0.1"
 })
 class OpenApiHttpTest {
 

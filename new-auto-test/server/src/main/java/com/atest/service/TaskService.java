@@ -55,6 +55,7 @@ public class TaskService {
     private final DispatchService dispatchService;
     private final EventService eventService;
     private final ViewMapper viewMapper;
+    private final CallbackUrlPolicy callbackUrlPolicy;
 
     public TaskService(AtestProperties props,
                        TaskRepository taskRepository,
@@ -66,7 +67,8 @@ public class TaskService {
                        ExecutionService executionService,
                        DispatchService dispatchService,
                        EventService eventService,
-                       ViewMapper viewMapper) {
+                       ViewMapper viewMapper,
+                       CallbackUrlPolicy callbackUrlPolicy) {
         this.props = props;
         this.taskRepository = taskRepository;
         this.executionRepository = executionRepository;
@@ -78,6 +80,7 @@ public class TaskService {
         this.dispatchService = dispatchService;
         this.eventService = eventService;
         this.viewMapper = viewMapper;
+        this.callbackUrlPolicy = callbackUrlPolicy;
     }
 
     // ------------------------------------------------------------------ create
@@ -315,6 +318,11 @@ public class TaskService {
         }
         if (uri.getHost() == null || uri.getHost().isBlank()) {
             throw ApiException.badRequest("callbackUrl 缺少主机名");
+        }
+        // SSRF 防护：默认拒绝 loopback/内网/link-local，配置了 allowed-hosts 则只放行名单内主机
+        String reject = callbackUrlPolicy.rejectReason(v);
+        if (reject != null) {
+            throw ApiException.badRequest(reject);
         }
         return v;
     }

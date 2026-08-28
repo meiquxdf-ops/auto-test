@@ -50,6 +50,8 @@ import org.springframework.http.HttpStatus;
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:atest-openapi;DB_CLOSE_DELAY=-1",
         "atest.agent.port=0",
+        // the local test receiver is on loopback, which the SSRF policy blocks by default
+        "atest.callback.allowed-hosts=127.0.0.1",
         // fast callback retries: waits are 5/10/20/40/80 ms instead of 1/2/4/8/16 s
         "atest.callback.backoff-base-ms=5",
         "atest.callback.timeout-ms=2000"

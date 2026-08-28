@@ -114,6 +114,13 @@ public class AtestProperties {
     @Getter
     @Setter
     public static class Callback {
+        /**
+         * SSRF 白名单：主机名 / IP / CIDR（如 cb.chaos.internal、10.9.0.0/16）。
+         * 空列表 = 允许一般公网 http(s)，但一律拒绝 loopback / RFC1918 内网 /
+         * link-local（含 169.254.169.254 元数据）等受保护地址；
+         * 非空 = 只允许名单内的主机（显式列出的内网主机也放行）。
+         */
+        private java.util.List<String> allowedHosts = new java.util.ArrayList<>();
         /** total delivery attempts before the callback is marked failed: 1 initial + 5 retries */
         private int maxAttempts = 6;
         /** wait before attempt N+1 is backoffBaseMs << (N-1): 1s, 2s, 4s, 8s, 16s */
