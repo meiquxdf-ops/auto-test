@@ -28,7 +28,7 @@ ss -lntp | grep -E ':(8080|9800|5173)'               # 三个端口都有人听�
 
 | 端口 | 谁在听 | 用途 |
 |---|---|---|
-| 8080 | Server | HTTP API + SSE + H2 console(`/h2-console`) |
+| 8080 | Server | HTTP API + SSE（H2 console 默认关闭，见 §9 开发库直查） |
 | 9800 | Server | Agent 长度前缀 TCP（`[4B 大端长度][JSON]`，单帧 ≤ 1MiB） |
 | 5173 | Vite | 前端 dev server，`/api` 反代到 8080 |
 
@@ -204,8 +204,16 @@ curl -s -X POST  http://127.0.0.1:8080/api/agents/<agentId>/restart
 curl -s -X POST  http://127.0.0.1:8080/api/agents/<agentId>/stop
 ```
 
-开发库直查：浏览器打开 `http://127.0.0.1:8080/h2-console`，
-JDBC URL `jdbc:h2:file:./data/atest`，用户 `sa`，空密码。
+开发库直查：H2 console **默认关闭**（sa/空密码可执行任意 SQL，跟随 8080 暴露太危险）。
+本地确需直查时，显式开启再起 Server：
+
+```bash
+java -jar atest-server.jar --spring.h2.console.enabled=true
+# 或环境变量 SPRING_H2_CONSOLE_ENABLED=true
+```
+
+然后浏览器打开 `http://127.0.0.1:8080/h2-console`，JDBC URL `jdbc:h2:file:./data/atest`，
+用户 `sa`，空密码。用完把开关关掉；共享/生产环境不要开。
 
 ## 10. 升级 / 重启注意事项
 

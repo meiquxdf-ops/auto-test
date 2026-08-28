@@ -32,7 +32,7 @@ services:
       # 宿主机 `make agent-dist` 会填充；agent 容器构建完也会自动拷一份进来。
       - ../dist/agent:/app/dist/agent:ro
     ports:
-      - "8080:8080"   # HTTP API + SSE + H2 console(/h2-console)
+      - "8080:8080"   # HTTP API + SSE（H2 console 默认关闭，需要时加 --spring.h2.console.enabled=true）
       - "9800:9800"   # Agent 长度前缀 TCP
     restart: unless-stopped
     healthcheck:
