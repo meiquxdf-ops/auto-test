@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import { shallowRef } from 'vue'
 
 const LS_KEY = 'nat.apiBase'
 const DEFAULT_BASE = 'http://127.0.0.1:8080'
@@ -15,31 +16,34 @@ function resolveBase(): string {
   return (import.meta.env.VITE_API_BASE || DEFAULT_BASE).replace(/\/+$/, '')
 }
 
-let apiBase = resolveBase()
+/** 响应式：页头改完接口地址后，拼 URL 的界面（接入调试的请求预览 / curl）要跟着重算 */
+const apiBaseRef = shallowRef(resolveBase())
 
 export function getApiBase(): string {
-  return apiBase
+  return apiBaseRef.value
 }
 
 export function getApiBaseLabel(): string {
-  return apiBase || `${location.origin}（vite proxy → ${import.meta.env.VITE_API_BASE || DEFAULT_BASE}）`
+  return (
+    apiBaseRef.value || `${location.origin}（vite proxy → ${import.meta.env.VITE_API_BASE || DEFAULT_BASE}）`
+  )
 }
 
 export function setApiBase(base: string | null) {
   if (base === null) localStorage.removeItem(LS_KEY)
   else localStorage.setItem(LS_KEY, base.replace(/\/+$/, ''))
-  apiBase = resolveBase()
-  http.defaults.baseURL = apiBase || undefined
+  apiBaseRef.value = resolveBase()
+  http.defaults.baseURL = apiBaseRef.value || undefined
 }
 
 /** SSE / 下载等需要完整 URL 的场景 */
 export function apiUrl(path: string): string {
   const p = path.startsWith('/') ? path : `/${path}`
-  return `${apiBase}${p}`
+  return `${apiBaseRef.value}${p}`
 }
 
 export const http = axios.create({
-  baseURL: apiBase || undefined,
+  baseURL: apiBaseRef.value || undefined,
   timeout: 20000,
   headers: { 'Content-Type': 'application/json' },
 })

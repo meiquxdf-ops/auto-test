@@ -308,9 +308,13 @@ const hasBody = computed(() => built.value.body !== null)
 const isUploadOp = computed(() => activeOp.value === 'upExec' || activeOp.value === 'upTask')
 const uploadFile = computed(() => built.value.upload ?? null)
 
-/** 开发态 apiBase 为空（走 vite 代理），curl 拼当前源同样可用 */
-const apiOrigin = getApiBase() || window.location.origin
-const fullUrl = computed(() => `${apiOrigin}${built.value.path}`)
+/**
+ * 开发态 apiBase 为空（走 vite 代理），curl 拼当前源同样可用。
+ * 页头能随时改接口地址，这里必须跟着重算：否则预览 / 复制的 URL 与 curl 会指向旧 Server，
+ * 而请求实际已经发去新地址。
+ */
+const apiOrigin = computed(() => getApiBase() || window.location.origin)
+const fullUrl = computed(() => `${apiOrigin.value}${built.value.path}`)
 
 /* ------------------------------------------------------------ 请求体 JSON（表单生成，可手动改） */
 
