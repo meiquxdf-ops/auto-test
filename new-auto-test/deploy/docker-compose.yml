@@ -19,7 +19,12 @@ services:
     image: eclipse-temurin:17-jre-jammy
     container_name: atest-server
     working_dir: /app
-    command: java -jar /app/atest-server.jar
+    # atest.http.public-base 会注入为 $ATEST_HTTP_BASE（脚本回传附件的上传地址）。
+    # 默认值 http://127.0.0.1:8080 在 agent 容器里指向 agent 自己，脚本 curl 上传必然
+    # Connection refused，所以这里显式改成 compose 网络内可达的 http://server:8080。
+    # 注意：宿主机 `make agent` 额外挂的 agent 解析不了 server 这个服务名，这类任务
+    # 需要在任务 env 里显式给 ATEST_HTTP_BASE=http://127.0.0.1:8080 覆盖（任务 env 优先）。
+    command: java -jar /app/atest-server.jar --atest.http.public-base=http://server:8080
     volumes:
       - ../server/target/atest-server.jar:/app/atest-server.jar:ro
       - server-data:/app/data
