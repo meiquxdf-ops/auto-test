@@ -516,6 +516,9 @@ const respHint = computed(() => {
   if (!r) return ''
   if (r.status === 409)
     return 'requestId 已被占用（全局唯一）：换一个或点「生成」；已存在的批次可直接去开放查询看进度。'
+  const bodyStr = typeof r.data === 'string' ? r.data : JSON.stringify(r.data ?? '')
+  if (r.status === 400 && bodyStr.includes('callbackUrl'))
+    return 'callbackUrl 被拒（400）：SSRF 防护默认禁止 loopback / 内网 / link-local（含云元数据 169.254.169.254）等受保护地址；确属可信接收方时找运维把主机加进 atest.callback.allowed-hosts 白名单。具体原因见响应体 message。'
   if (r.status === 400 && r.url.includes('/api/tasks/batch'))
     return '整单 400：requestId 缺失/格式错，或所有条目都无效。此时 requestId 未被占用，修正后可原样重试。'
   if (r.status === 413)
@@ -630,7 +633,10 @@ const createTargetsHint = computed(() =>
               </el-form-item>
               <el-form-item label="callbackUrl（可选）">
                 <el-input v-model="createForm.callbackUrl" class="mono" placeholder="http://你的服务/notify" clearable />
-                <div class="od__hint">任务到终态后向该地址 POST 一次结果，2xx 算送达，失败退避重试 5 次</div>
+                <div class="od__hint">
+                  任务到终态后向该地址 POST 一次结果，2xx 算送达，失败退避重试 5 次。
+                  有 SSRF 防护：loopback / 内网 / link-local 地址默认创建即 400，需运维加白名单（见下方注意事项）
+                </div>
               </el-form-item>
               <el-form-item label="command">
                 <el-input v-model="createForm.command" type="textarea" :rows="2" class="mono" placeholder="要执行的 shell 命令" />
@@ -673,6 +679,9 @@ const createTargetsHint = computed(() =>
               </el-form-item>
               <el-form-item label="callbackUrl（可选，整批共用）">
                 <el-input v-model="batchForm.callbackUrl" class="mono" placeholder="http://你的服务/notify" clearable />
+                <div class="od__hint">
+                  SSRF 防护对整批生效：内网等受保护地址会让整单 400（requestId 不占用），加白名单后可原样重试
+                </div>
               </el-form-item>
 
               <div class="od__items">
@@ -1006,7 +1015,8 @@ const createTargetsHint = computed(() =>
                 等结果：创建时带 callbackUrl，任务到终态（含取消）Server 向它 POST 一次 JSON
                 （<code class="code-inline">event: task.terminal</code>，含 taskId / requestId / status /
                 statusCounts / executions[]），2xx 算送达；不用回调就轮询
-                <code class="code-inline">GET /api/tasks?requestId=</code>。
+                <code class="code-inline">GET /api/tasks?requestId=</code>。回调地址有 SSRF
+                白名单校验、投递不跟随 3xx 重定向，可选 HMAC 验签（见下方注意事项）。
               </li>
               <li>
                 拉日志：回调里每台机器只有最后一行（lastLine），完整日志按 executeId 拉
@@ -1075,6 +1085,21 @@ const createTargetsHint = computed(() =>
             全部条目失败时整单 400 且 requestId <b>不占用</b>，修正后可原样重试
           </li>
           <li>任务到终态（含取消）后向 callbackUrl POST 一次结果，2xx 算送达，失败按 1s 起退避重试 5 次</li>
+          <li>
+            callbackUrl 有 <b>SSRF 防护</b>：默认拒绝 loopback / RFC1918 内网 / link-local
+            （含云元数据 <code class="code-inline">169.254.169.254</code>）等受保护地址，创建时直接
+            <b>400</b>；Server 配置 <code class="code-inline">atest.callback.allowed-hosts</code>
+            （主机名 / IP / CIDR）后只放行名单内主机——<b>内网回调接收方必须显式列入</b>。
+            校验在创建时与每次投递前都执行，且回调<b>不跟随 3xx 重定向</b>（重定向按投递失败处理）
+          </li>
+          <li>
+            <b>回调验签（可选）</b>：Server 配置 <code class="code-inline">atest.callback.hmac-secret</code>
+            后，每次回调 POST 都带 <code class="code-inline">X-Atest-Signature</code>
+            （HMAC-SHA256(secret, 原始请求体字节) 的小写 hex）与
+            <code class="code-inline">X-Hub-Signature-256</code>（同一摘要，
+            <code class="code-inline">sha256=&lt;hex&gt;</code> 风格）两个签名头；接收方对
+            <b>收到的原始 body 字节</b>重算 HMAC 并常量时间比较即可。未配置则没有这两个头
+          </li>
           <li>
             回调体里每台机器只有 <code class="code-inline">executions[].lastLine</code>
             （最后一行，截 4096 字符），<b>不含完整日志</b>；全量日志收到回调后按 executeId 拉

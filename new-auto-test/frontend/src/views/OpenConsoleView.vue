@@ -1167,6 +1167,11 @@ async function copySnippet() {
           </li>
           <li>任务到终态后向 callbackUrl POST 一次结果；2xx 算送达，否则按 1s 起退避重试 5 次</li>
           <li>
+            回调地址有 SSRF 防护（loopback/内网默认 400，白名单
+            <code class="code-inline">atest.callback.allowed-hosts</code>），可选 HMAC 验签头
+            <code class="code-inline">X-Atest-Signature</code>；详见接入手册与「接入调试」页注意事项
+          </li>
+          <li>
             requestId 全局唯一（<code class="code-inline">^[A-Za-z0-9._-]{1,64}$</code>），重复创建返回 409
           </li>
           <li>
