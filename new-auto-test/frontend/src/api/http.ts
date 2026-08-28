@@ -137,22 +137,36 @@ export interface RawHttpResult {
   durationMs: number
 }
 
+export interface RawRequestOptions {
+  /** 上传/下载大附件时放宽超时（默认沿用实例 20s） */
+  timeoutMs?: number
+  /** 'blob'：响应体可能是二进制（附件下载），不要按 JSON/文本解析 */
+  responseType?: 'blob'
+}
+
 /**
  * 接入调试页专用：原样透出 HTTP 状态码与响应体，不做 unwrap、不弹全局 toast。
  * 4xx/5xx 也走 resolve（调试页要把错误响应原样展示给调用方），
  * 只有网络层失败（连不上 Server）才会 reject（被上面的拦截器包成 status 0 的 ApiError）。
+ * body 传 FormData 时按 multipart 发送：显式换掉实例默认的 JSON Content-Type，
+ * 浏览器会自动补上带 boundary 的 multipart/form-data。
  */
 export async function rawRequest(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
+  opts: RawRequestOptions = {},
 ): Promise<RawHttpResult> {
   const started = Date.now()
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const res = await http.request({
     method,
     url: path,
     data: body,
     validateStatus: () => true,
+    ...(isForm ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}),
+    ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+    ...(opts.responseType ? { responseType: opts.responseType } : {}),
   })
   return {
     status: res.status,

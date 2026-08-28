@@ -1169,6 +1169,9 @@ async function copySnippet() {
           <li>
             requestId 全局唯一（<code class="code-inline">^[A-Za-z0-9._-]{1,64}$</code>），重复创建返回 409
           </li>
+          <li>
+            完整接入手册见仓库 <code class="code-inline">new-auto-test/docs/open-api.md</code>，逐接口联调去「接入调试」（#/open/debug）
+          </li>
         </ul>
         <div class="oc__code">
           <button class="link-btn oc__copy" @click="copySnippet">复制</button>

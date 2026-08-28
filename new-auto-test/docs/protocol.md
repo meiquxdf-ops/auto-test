@@ -2,6 +2,8 @@
 
 独立新项目，不兼容旧 Hessian / 旧 Java Agent。
 
+> 外部系统接 Open API（requestId / 批量创建 / 回调 / 附件）请看接入手册 [`open-api.md`](open-api.md)，本文是内部冻结规格。
+
 ## 规模与约束
 
 - 设计目标：1000 Agent，全局同时 RUNNING 约 50

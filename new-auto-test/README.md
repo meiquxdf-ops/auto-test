@@ -11,6 +11,7 @@
 new-auto-test/
 ├── docs/
 │   ├── protocol.md    协议与产品规格（冻结，一切语义以此为准）
+│   ├── open-api.md    开放接口接入手册（测试计划系统等接入方从这里开始）
 │   └── runbook.md     排障动线
 ├── server/            Java Server（Maven 工程）
 ├── agent/             Go Agent（cmd/atagent 单二进制）
@@ -112,7 +113,8 @@ make test         # Server mvn test + Agent go test ./...
 
 ## 产品语义速览
 
-完整规格见 [`docs/protocol.md`](docs/protocol.md)（冻结），这里只列日常用得到的：
+完整规格见 [`docs/protocol.md`](docs/protocol.md)（冻结）；对外系统接 Open API
+（requestId / 批量 / 回调 / 附件）看 [`docs/open-api.md`](docs/open-api.md)。这里只列日常用得到的：
 
 - **身份**：`agentId` 安装时生成、落盘保留；**一机一 tag**，全局唯一、重名拒绝，tag 与 agentId 可互相解析。
 - **建任务**：HTTP `POST /api/tasks`，字段 `command + cwd + env + targets + conditionConfig + timeoutSec`，`operator` 可空；前端有专门的「测试下发页」，一键下发并跟日志。
