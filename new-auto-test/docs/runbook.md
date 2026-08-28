@@ -90,7 +90,7 @@ cat /var/lib/atagent/agent-id      # 开发模式在 agent/data/agent-id
 - **连上就被断，日志出现 `dup_session`**：同一个 `agentId` 已有活跃连接。
   Server 的仲裁逻辑是"ping 旧连接等 5s，活着拒新的，死了才接管"。
   两种典型成因：
-  1. 旧 Agent 进程没停干净 → 测试机上 `pgrep -af atagent`，把残留进程停掉（`install.sh` 升级路径会自动处理）；
+  1. 旧 Agent 进程没停干净 → 测试机上 `pgrep -af atagent`，把残留进程停掉（`install.sh` 升级路径会自动收掉 `/usr/local/bin/atagent` 的残留进程；其他路径的同名进程不归它管，需手工确认）；
   2. **克隆机复制了 `agent-id`** → 两台机器在抢同一个身份。在克隆机上重装：`sudo ./install.sh --new-agent-id ...`。
 - **机器在列表里重复出现**：某台机器换过 `agent-id`（`--new-agent-id` 或数据目录被清）。旧记录是历史身份，忽略或后台清理。
 - **改 tag 报 409**：一机一 tag、全局唯一，重名拒绝。换名字再提。

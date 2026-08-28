@@ -124,7 +124,7 @@ sudo ./install.sh --server 10.0.0.5:9800 --tag qa-node-01 \
 
 1. 校验 root、参数格式（`host:port`、tag 字符集、并发 1–4）。
 2. 取二进制到临时目录，可选 sha256 校验，顺手看一眼是不是 ELF 文件（防止把 HTML 错误页装上去）。
-3. **先停旧的**：`systemctl stop atagent`，再扫一遍残留 `atagent` 进程，SIGTERM → 等 10s → SIGKILL。旧进程不停干净会和新进程抢同一个 `agentId`，Server 那边表现为 `dup_session`。
+3. **先停旧的**：`systemctl stop atagent`，再扫残留的**本机安装** Agent 进程——进程名是 `atagent` **且** 真实可执行文件是 `/usr/local/bin/atagent`（按 `/proc/<pid>/exe` 判定，二进制被覆盖后带 ` (deleted)` 后缀的也算），SIGTERM → 等 10s → SIGKILL。旧进程不停干净会和新进程抢同一个 `agentId`，Server 那边表现为 `dup_session`。跑在其他路径的同名进程（如 compose/开发环境的 `/tmp/atagent`）有自己的 agent-id，不会被误杀。
 4. 安装二进制到 `/usr/local/bin/atagent`（先写 `.new` 再 `mv`，避免 ETXTBSY）。
 5. 生成 `agent-id`：`$DATA_DIR/agent-id` 存在就沿用，不存在才生成 UUID（`/proc/sys/kernel/random/uuid` → `uuidgen` → `/dev/urandom` 兜底）。
 6. 写 `/etc/atagent/config.yaml`，旧文件备份成 `config.yaml.bak.<时间戳>`。

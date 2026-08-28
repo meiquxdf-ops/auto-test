@@ -94,8 +94,12 @@ done
 
 have_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
 
-# 找还活着的 atagent 进程。只按进程名精确匹配，不能用 pgrep -f：
-# 本脚本自己的命令行里就带 atagent 路径（--bin），全命令行匹配会把 sudo/自己一起杀掉。
+# 找还活着的、属于本机安装的 atagent 进程。两层过滤：
+# 1) 进程名精确匹配 atagent。不能用 pgrep -f：本脚本自己的命令行里就带 atagent
+#    路径（--bin），全命令行匹配会把 sudo/自己一起杀掉；
+# 2) 真实可执行文件必须是 ${INSTALL_BIN}（按 /proc/<pid>/exe 判定）。只看进程名会
+#    误杀跑在其他路径的同名进程（compose/开发环境的 /tmp/atagent、./atagent 等），
+#    它们有自己的 agent-id，不会和本机安装抢会话，轮不到本脚本收割。
 find_agent_pids() {
     local out
     if command -v pgrep >/dev/null 2>&1; then
@@ -103,9 +107,13 @@ find_agent_pids() {
     else
         out="$(ps -eo pid=,comm= 2>/dev/null | awk '$2 == "atagent" {print $1}' || true)"
     fi
-    local pid
+    local pid exe
     for pid in $out; do
         [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+        # 旧二进制被覆盖/删除后 exe 带 " (deleted)" 后缀，仍算本机安装的 Agent
+        exe="${exe% (deleted)}"
+        [[ "$exe" == "$INSTALL_BIN" ]] || continue
         printf '%s\n' "$pid"
     done
 }
@@ -119,11 +127,12 @@ stop_running_agent() {
 
     # 非 systemd 拉起来的（手工 nohup、旧版脚本）也要收掉，
     # 否则新旧两个进程会用同一个 agentId 抢连接，触发 dup_session。
+    # find_agent_pids 只会命中 ${INSTALL_BIN} 的进程，别的路径的同名进程不受影响。
     local pids
     pids="$(find_agent_pids | tr '\n' ' ')"
     [[ -n "${pids// /}" ]] || return 0
 
-    log "发现残留 atagent 进程: ${pids}发送 SIGTERM"
+    log "发现残留的本机安装 atagent 进程（${INSTALL_BIN}）: ${pids}发送 SIGTERM"
     # shellcheck disable=SC2086
     kill -TERM $pids 2>/dev/null || true
 

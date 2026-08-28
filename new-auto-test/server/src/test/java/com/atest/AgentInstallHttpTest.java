@@ -100,6 +100,12 @@ class AgentInstallHttpTest {
         // 曾经的静默降级路径（没有 systemd 时跳过 unit / enable 却照样报安装成功）不允许回归
         assertThat(script).doesNotContain("跳过 unit 写入");
         assertThat(script).doesNotContain("跳过 enable/start；手动启动");
+        // 残留进程收割不允许只按进程名（pgrep -x atagent）匹配：那会误杀跑在其他路径的
+        // 同名进程（如 compose 开发环境的 /tmp/atagent）。必须再按 /proc/<pid>/exe
+        // 确认真实可执行文件是本机安装的 INSTALL_BIN，被覆盖的旧二进制（" (deleted)"）也算
+        assertThat(script).contains("readlink -f \"/proc/${pid}/exe\"");
+        assertThat(script).contains("exe=\"${exe% (deleted)}\"");
+        assertThat(script).contains("[[ \"$exe\" == \"$INSTALL_BIN\" ]] || continue");
     }
 
     @Test
