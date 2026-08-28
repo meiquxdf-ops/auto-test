@@ -114,6 +114,8 @@ export interface Task {
   operator?: string
   timeoutSec?: number
   priority?: number
+  /** 队列位次，越小越先下发；排队顺序只能按它算，不能按列表接口的返回顺序 */
+  queueOrder?: number
   status: ExecutionStatus
   targets: string[]
   conditionConfig?: ConditionConfig | null

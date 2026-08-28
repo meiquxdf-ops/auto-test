@@ -139,7 +139,7 @@ const statusTabs = computed(() => {
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   const machine = machineFilter.value
-  return tasks.value.filter((t) => {
+  const rows = tasks.value.filter((t) => {
     if (statusFilter.value && t.status !== statusFilter.value) return false
     if (callbackFilter.value && t.callbackStatus !== callbackFilter.value) return false
     if (machine && !taskTouchesMachine(t, machine)) return false
@@ -153,9 +153,33 @@ const filtered = computed(() => {
       t.executions.some((e) => (e.displayTag || e.agentId || '').toLowerCase().includes(kw))
     )
   })
+  // 排队中的行按队列位次置顶，序号才会从上往下读成 1、2、3，上移/下移也才和视觉一致；
+  // 其余行保持接口给的倒序（sort 是稳定的）
+  const rank = new Map(pendingTasks.value.map((t, i) => [t.taskId, i]))
+  return rows.sort((a, b) => {
+    const ra = rank.get(a.taskId)
+    const rb = rank.get(b.taskId)
+    if (ra !== undefined && rb !== undefined) return ra - rb
+    if (ra !== undefined) return -1
+    if (rb !== undefined) return 1
+    return 0
+  })
 })
 
-const pendingTasks = computed(() => tasks.value.filter((t) => t.status === 'pending'))
+/**
+ * 列表接口按 id 倒序返回（新的在前），而下发是按 queueOrder 升序取的。
+ * 直接拿返回顺序当排队顺序会把队列读反，"上移" 还会把整条队列倒序写回服务端。
+ */
+const pendingTasks = computed(() =>
+  tasks.value
+    .filter((t) => t.status === 'pending')
+    .sort(
+      (a, b) =>
+        (a.queueOrder ?? Number.MAX_SAFE_INTEGER) - (b.queueOrder ?? Number.MAX_SAFE_INTEGER) ||
+        (a.createdAt ?? 0) - (b.createdAt ?? 0) ||
+        a.taskId.localeCompare(b.taskId, undefined, { numeric: true }),
+    ),
+)
 
 const machineOptions = computed(() => {
   const set = new Set<string>()
@@ -194,23 +218,19 @@ function onExpandChange(row: Task, state: Task[] | boolean) {
 /* ------------------------------------------------------------ 队列排序 */
 
 async function movePending(task: Task, delta: number) {
-  const ids = pendingTasks.value.map((t) => t.taskId)
-  const i = ids.indexOf(task.taskId)
+  const queue = pendingTasks.value
+  const i = queue.findIndex((t) => t.taskId === task.taskId)
   const j = i + delta
-  if (i < 0 || j < 0 || j >= ids.length) return
-  const nextIds = [...ids]
+  if (i < 0 || j < 0 || j >= queue.length) return
+  const nextIds = queue.map((t) => t.taskId)
   ;[nextIds[i], nextIds[j]] = [nextIds[j], nextIds[i]]
 
-  // 乐观更新：先在本地按新顺序摆好，失败再回滚
-  const backup = [...tasks.value]
-  const byId = new Map(tasks.value.map((t) => [t.taskId, t]))
-  const reordered = nextIds.map((id) => byId.get(id)).filter(Boolean) as Task[]
-  const others = tasks.value.filter((t) => !nextIds.includes(t.taskId))
-  tasks.value = [...reordered, ...others].sort((a, b) => {
-    const ap = a.status === 'pending' ? 0 : 1
-    const bp = b.status === 'pending' ? 0 : 1
-    return ap - bp
-  })
+  // 乐观更新：换掉两条的队列位次，失败再换回来
+  const a = queue[i]
+  const b = queue[j]
+  const backup: [number | undefined, number | undefined] = [a.queueOrder, b.queueOrder]
+  a.queueOrder = backup[1]
+  b.queueOrder = backup[0]
 
   acting.value = `move:${task.taskId}`
   try {
@@ -218,7 +238,8 @@ async function movePending(task: Task, delta: number) {
     toastOk('顺序已更新')
     await load(true)
   } catch (e) {
-    tasks.value = backup
+    a.queueOrder = backup[0]
+    b.queueOrder = backup[1]
     toastError(e, '调整顺序失败')
   } finally {
     acting.value = ''
