@@ -85,12 +85,21 @@ class AgentInstallHttpTest {
     void realInstallScriptIsTheDeployOne() {
         ResponseEntity<String> res = rest.getForEntity("/api/agent/files/install.sh", String.class);
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String script = res.getBody();
         // deploy/install.sh 的特征内容：unit 渲染与注册验证
-        assertThat(res.getBody()).contains("SERVICE_NAME=\"atagent\"");
-        assertThat(res.getBody()).contains("verify_registered");
+        assertThat(script).contains("SERVICE_NAME=\"atagent\"");
+        assertThat(script).contains("verify_registered");
         // 写 unit 前必须先建 /etc/systemd/system：没有该目录的机器（容器/WSL/无 systemd）
         // 曾在 render_unit 的重定向处直接被 set -e 打断（"No such file or directory"）
-        assertThat(res.getBody()).contains("install -d -m 0755 \"$(dirname \"$UNIT_FILE\")\"");
+        assertThat(script).contains("install -d -m 0755 \"$(dirname \"$UNIT_FILE\")\"");
+        // 开机自启是安装的一部分：默认路径必须 enable --now 并确认 is-enabled，
+        // 唯一的合法跳过方式是显式 --no-enable（做基础镜像用）
+        assertThat(script).contains("systemctl enable --now \"${SERVICE_NAME}.service\"");
+        assertThat(script).contains("systemctl is-enabled");
+        assertThat(script).contains("--no-enable");
+        // 曾经的静默降级路径（没有 systemd 时跳过 unit / enable 却照样报安装成功）不允许回归
+        assertThat(script).doesNotContain("跳过 unit 写入");
+        assertThat(script).doesNotContain("跳过 enable/start；手动启动");
     }
 
     @Test

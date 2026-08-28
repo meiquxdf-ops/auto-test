@@ -94,8 +94,6 @@ done
 
 have_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
 
-systemd_or_skip() { have_systemd; }
-
 # 找还活着的 atagent 进程。只按进程名精确匹配，不能用 pgrep -f：
 # 本脚本自己的命令行里就带 atagent 路径（--bin），全命令行匹配会把 sudo/自己一起杀掉。
 find_agent_pids() {
@@ -114,7 +112,7 @@ find_agent_pids() {
 
 # 停掉可能还在跑的旧 Agent：先 systemd，再兜底扫残留进程。
 stop_running_agent() {
-    if systemd_or_skip && systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+    if have_systemd && systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
         log "停止旧服务 ${SERVICE_NAME}.service"
         systemctl stop "${SERVICE_NAME}.service" || warn "systemctl stop 失败，继续用信号兜底"
     fi
@@ -145,12 +143,12 @@ stop_running_agent() {
 # ---------------------------------------------------------------- 卸载
 
 if [[ "$DO_UNINSTALL" == "1" ]]; then
-    if systemd_or_skip; then
+    if have_systemd; then
         systemctl disable --now "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
     fi
     stop_running_agent
     rm -f "$UNIT_FILE"
-    if systemd_or_skip; then
+    if have_systemd; then
         systemctl daemon-reload || true
         systemctl reset-failed "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
     fi
@@ -354,14 +352,10 @@ render_unit() {
     chmod 0644 "$UNIT_FILE"
 }
 
-# 与下面的 enable/start 用同一个 systemd 判定：没有 systemd 就既不写 unit 也不失败，
-# 二进制和配置已经落盘，提示手动前台启动即可
-if systemd_or_skip; then
-    render_unit
-    log "systemd unit 已写入: $UNIT_FILE"
-else
-    warn "当前系统没有运行 systemd（缺 systemctl 或 /run/systemd/system），跳过 unit 写入"
-fi
+# unit 永远落盘：开机自启是安装的一部分，不随宿主环境静默降级。
+# 镜像构建等场景里 systemd 此刻没在跑也没关系，文件写好了，装出来的机器开机就有服务。
+render_unit
+log "systemd unit 已写入: $UNIT_FILE"
 
 # is-active 只说明进程活着。tag 重名（tag_conflict）或 9800 不通时，
 # Agent 会一直重连、服务照样 active，但机器永远不会在 机器列表 里上线。
@@ -386,12 +380,17 @@ verify_registered() {
 }
 
 if [[ "$DO_ENABLE" == "0" ]]; then
-    log "按 --no-enable 跳过 enable/start"
-elif ! systemd_or_skip; then
-    warn "当前系统没有运行 systemd，跳过 enable/start；手动启动: $INSTALL_BIN run --config $CONF_FILE"
+    log "按 --no-enable 跳过 enable/start（仅用于做基础镜像；正式安装不要带这个参数）"
 else
+    # 开机自启（systemctl enable）必须成功，否则安装就是失败的，不能静默放过
+    have_systemd || die "开机自启需要 systemd，当前系统没有运行 systemd（缺 systemctl 或 /run/systemd/system）。二进制、配置、unit 已落盘，请在有 systemd 的机器上重跑本脚本"
     systemctl daemon-reload
     systemctl enable --now "${SERVICE_NAME}.service"
+    # enable --now 理论上失败会非 0，这里再显式确认一次开机自启真的挂上了
+    if ! systemctl is-enabled --quiet "${SERVICE_NAME}.service"; then
+        die "systemctl enable 之后 is-enabled 仍不通过，开机自启未生效。手工排查: systemctl is-enabled ${SERVICE_NAME}"
+    fi
+    log "开机自启已启用（systemctl is-enabled ${SERVICE_NAME} 通过）"
     sleep 1
     if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
         log "服务已启动，等待注册到 Server ..."
