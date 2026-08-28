@@ -5,13 +5,18 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import com.atest.common.Json;
 import com.atest.config.AtestProperties;
@@ -43,6 +48,11 @@ public class CallbackService {
     /** callback lastLine cap; full logs (up to 5MB) intentionally never travel in the callback */
     private static final int MAX_LAST_LINE_CHARS = 4096;
     private static final int MAX_ERROR_CHARS = 500;
+
+    /** HMAC-SHA256 hex of the exact POST body, present only when atest.callback.hmac-secret is set */
+    public static final String SIGNATURE_HEADER = "X-Atest-Signature";
+    /** same digest in GitHub-webhook style ("sha256=<hex>") for receivers with existing verifiers */
+    public static final String GITHUB_STYLE_SIGNATURE_HEADER = "X-Hub-Signature-256";
 
     private final AtestProperties props;
     private final TaskRepository taskRepository;
@@ -138,11 +148,19 @@ public class CallbackService {
         }
         HttpRequest request;
         try {
-            request = HttpRequest.newBuilder(URI.create(url))
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofMillis(props.getCallback().getTimeoutMs()))
                     .header("Content-Type", "application/json; charset=utf-8")
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+            // optional body signature: receivers verify the callback really came from this
+            // server and was not tampered with; no secret configured = no header (compatible)
+            String secret = props.getCallback().getHmacSecret();
+            if (secret != null && !secret.isBlank()) {
+                String signature = hmacSha256Hex(secret, body);
+                builder.header(SIGNATURE_HEADER, signature)
+                        .header(GITHUB_STYLE_SIGNATURE_HEADER, "sha256=" + signature);
+            }
+            request = builder.build();
         } catch (Exception e) {
             // URL was validated at ingest; treat a bad one as a hard failure, no retry can fix it
             markFailed(taskId, attemptNo, "回调地址无效: " + trimError(e.getMessage()));
@@ -258,6 +276,18 @@ public class CallbackService {
             return "unknown error";
         }
         return error.length() > MAX_ERROR_CHARS ? error.substring(0, MAX_ERROR_CHARS) : error;
+    }
+
+    /** Lowercase hex HMAC-SHA256 of the UTF-8 body — what the receiver recomputes to verify. */
+    static String hmacSha256Hex(String secret, String body) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException e) {
+            // HmacSHA256 is mandatory in every JRE; a failure here is a broken runtime
+            throw new IllegalStateException("HMAC-SHA256 unavailable", e);
+        }
     }
 
     /** Log-safe form: query string and userinfo may carry caller secrets, they never hit the log. */
